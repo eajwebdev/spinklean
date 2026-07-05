@@ -169,7 +169,16 @@ class SmsNotifier
 
     private static function smsContent(string $message): string
     {
-        return Str::limit($message, 160, '');
+        // UniSMS accepts up to 670 characters per message (multi-part SMS).
+        // Use mb_* so multi-byte characters (emoji, ñ, curly quotes) are
+        // counted and cut on character boundaries, not bytes.
+        $message = trim($message);
+
+        if (mb_strlen($message) <= 670) {
+            return $message;
+        }
+
+        return mb_substr($message, 0, 670);
     }
 
     private static function renderTemplate(SystemSetting $settings, string $templateKey, JobOrder $order): string
@@ -180,7 +189,20 @@ class SmsNotifier
             $template = $defaults[$templateKey] ?? '';
         }
 
-        return strtr($template, self::templateValues($settings, $order));
+        $values = self::templateValues($settings, $order);
+
+        // Case-insensitive so {NAME}, {Name} and {name} all resolve.
+        return str_ireplace(array_keys($values), array_values($values), $template);
+    }
+
+    private static function firstNamePart(string $name): string
+    {
+        // Split only on " - " (dash padded by spaces) so a hyphenated
+        // name like "Mary-Jane" is preserved, but an address suffix like
+        // "EDWIN - APARTMENT 2" is dropped.
+        $parts = preg_split('/\s+-\s+/', trim($name), 2);
+
+        return trim($parts[0] ?? $name);
     }
 
     private static function templateValues(SystemSetting $settings, JobOrder $order): array
@@ -189,15 +211,33 @@ class SmsNotifier
         $storeName = $settings->business_name ?: config('app.name');
         $currency = $settings->currency ?: 'PHP';
 
+        // Customer names may carry an address suffix after " - "
+        // (e.g. "EDWIN - APARTMENT 2"). For SMS we only want the name part.
+        $name = self::firstNamePart((string) ($customer?->name ?? ''));
+        $phone = (string) ($customer?->phone ?? '');
+        $orderNumber = (string) $order->job_order_number;
+        $branchName = (string) ($order->branch?->name ?? $storeName);
+        $status = Str::headline((string) $order->status);
+        $total = $currency.' '.number_format((float) $order->total, 2);
+        $balance = $currency.' '.number_format((float) $order->balance, 2);
+
         return [
-            '{customer_name}' => (string) ($customer?->name ?? ''),
-            '{customer_phone}' => (string) ($customer?->phone ?? ''),
-            '{job_order_number}' => (string) $order->job_order_number,
+            // Canonical placeholders
+            '{customer_name}' => $name,
+            '{customer_phone}' => $phone,
+            '{job_order_number}' => $orderNumber,
             '{store_name}' => (string) $storeName,
-            '{branch_name}' => (string) ($order->branch?->name ?? $storeName),
-            '{status}' => Str::headline((string) $order->status),
-            '{total}' => $currency.' '.number_format((float) $order->total, 2),
-            '{balance}' => $currency.' '.number_format((float) $order->balance, 2),
+            '{branch_name}' => $branchName,
+            '{status}' => $status,
+            '{total}' => $total,
+            '{balance}' => $balance,
+            // Short aliases (case-insensitive variants handled in renderTemplate)
+            '{name}' => $name,
+            '{phone}' => $phone,
+            '{order_no}' => $orderNumber,
+            '{order_number}' => $orderNumber,
+            '{branch}' => $branchName,
+            '{store}' => (string) $storeName,
         ];
     }
 }

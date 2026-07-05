@@ -67,8 +67,48 @@ class SystemSetting extends Model
     public static function defaultSmsTemplates(): array
     {
         return [
-            'sms_template_order_received' => 'Hi {customer_name}, {store_name} has received your laundry order {job_order_number}. It is now recorded and queued for processing. We will notify you when it is ready.',
-            'sms_template_delivery_received' => 'Hi {customer_name}, {store_name} has picked up and received your laundry order {job_order_number}. It is now recorded and queued for processing. We will notify you when it is ready.',
+            'sms_template_order_received' => <<<'SMS'
+                Hi {NAME}! 👋
+
+                We have successfully received your laundry at our {BRANCH} Branch.
+
+                Order #: {ORDER_NO}
+
+                Please keep this order number, as it will be required when claiming your laundry or when inquiring about your order. If you requested delivery, kindly wait for our confirmation once your laundry is ready.
+
+                You’re also eligible for our Loyalty Card!
+                Collect 10 stamps and receive 1 FREE Wash.
+
+                Once your laundry is ready, we’ll send you another SMS with your total amount due and delivery/pick-up details.
+
+                For inquiries, please call our official numbers:
+
+                📍 Osmeña Branch: (0955) 308-1362
+                📍 Julio Pacana Branch: (0955) 549-0417
+
+                This is an automated message. Please DO NOT REPLY.
+                SMS,
+            'sms_template_delivery_received' => <<<'SMS'
+                Hi {NAME}! 👋
+
+                We have successfully received your laundry at our {BRANCH} Branch.
+
+                Order #: {ORDER_NO}
+
+                Please keep this order number, as it will be required when claiming your laundry or when inquiring about your order. If you requested delivery, kindly wait for our confirmation once your laundry is ready.
+
+                You’re also eligible for our Loyalty Card!
+                Collect 10 stamps and receive 1 FREE Wash.
+
+                Once your laundry is ready, we’ll send you another SMS with your total amount due and delivery/pick-up details.
+
+                For inquiries, please call our official numbers:
+
+                📍 Osmeña Branch: (0955) 308-1362
+                📍 Julio Pacana Branch: (0955) 549-0417
+
+                This is an automated message. Please DO NOT REPLY.
+                SMS,
             'sms_template_ready_for_pickup' => 'Hi {customer_name}, your laundry {job_order_number} is ready for pickup.',
             'sms_template_ready_for_delivery' => 'Hi {customer_name}, your laundry {job_order_number} is ready for delivery.',
             'sms_template_completed' => 'Hi {customer_name}, your laundry {job_order_number} has been completed. Thank you.',
