@@ -57,7 +57,7 @@
                     <span data-lucide="receipt" class="h-4 w-4"></span> Receipt
                 </button>
                 
-                {{-- SMS tab - ONLY for Super Admin --}}
+                {{-- SMS tab - visible to both Admin and Super Admin --}}
                 @if($canManageSms)
                     <button type="button" @click="tab = 'sms'" class="inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-medium transition" :class="tab === 'sms' ? 'bg-white text-primary shadow-sm dark:bg-gray-900' : 'text-muted hover:bg-white/70 dark:hover:bg-gray-900'">
                         <span data-lucide="sms" class="h-4 w-4"></span> SMS/API
@@ -244,7 +244,7 @@
                     </div>
                 </div>
 
-                {{-- SMS Tab - ONLY for Super Admin --}}
+                {{-- SMS Tab - visible to both Admin and Super Admin --}}
                 @if($canManageSms)
                 @php($smsTemplateDefaults = \App\Models\SystemSetting::defaultSmsTemplates())
                 <div x-show="tab === 'sms'" class="grid grid-cols-1 lg:grid-cols-2 gap-4">

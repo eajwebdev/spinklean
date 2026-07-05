@@ -19,7 +19,7 @@ class SystemSettingController extends Controller
         $user = $request->user();
         $settings = SystemSetting::current();
         $canManageGlobal = $user->isAdmin();
-        $canManageSms = $user->isSuperAdmin();
+        $canManageSms = $user->isAdmin();
         $canChooseBranch = $user->isAdmin();
 
         $branches = Branch::query()
@@ -58,7 +58,7 @@ class SystemSettingController extends Controller
         $user = $request->user();
         $settings = SystemSetting::current();
         $canManageGlobal = $user->isAdmin();
-        $canManageSms = $user->isSuperAdmin();
+        $canManageSms = $user->isAdmin();
         $canChooseBranch = $user->isAdmin();
         $branch = $canChooseBranch
             ? Branch::query()->findOrFail($request->integer('branch_id'))
