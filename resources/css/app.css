@@ -1,0 +1,358 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+    --color-primary: #2E7D32;
+    --color-accent: #16A34A;
+    --color-smoke: #F8FAFC;
+    --color-dark: #020617;
+    --color-muted: #64748B;
+    --color-border: #E2E8F0;
+}
+
+[x-cloak] {
+    display: none !important;
+}
+
+body {
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+}
+
+.app-surface {
+    background: #f8fafc;
+}
+
+.dark .app-surface {
+    background: #020617;
+}
+
+input,
+select,
+textarea {
+    color-scheme: light;
+}
+
+.dark input,
+.dark select,
+.dark textarea {
+    color-scheme: dark;
+}
+
+::selection {
+    background: color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, #94a3b8 45%, transparent) transparent;
+}
+
+*::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+*::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, #94a3b8 38%, transparent);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, #64748b 55%, transparent);
+}
+
+.dark * {
+    scrollbar-color: color-mix(in srgb, #64748b 42%, transparent) transparent;
+}
+
+.dark *::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, #64748b 38%, transparent);
+}
+
+.dark *::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, #94a3b8 48%, transparent);
+}
+
+.glass-panel {
+    background: rgba(255, 255, 255, 0.84);
+    backdrop-filter: blur(18px);
+}
+
+.dark .glass-panel {
+    background: rgba(17, 24, 39, 0.78);
+}
+
+.app-sidebar {
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 82%, #020617 18%) 0%, color-mix(in srgb, var(--color-primary) 48%, #020617 52%) 100%);
+    border-color: color-mix(in srgb, var(--color-primary) 38%, #020617 62%);
+    color: color-mix(in srgb, #ffffff 92%, var(--color-primary) 8%);
+}
+
+.dark .app-sidebar {
+    background:
+        linear-gradient(180deg, color-mix(in srgb, var(--color-primary) 58%, #020617 42%) 0%, color-mix(in srgb, var(--color-primary) 28%, #020617 72%) 100%);
+    border-color: color-mix(in srgb, var(--color-primary) 28%, #020617 72%);
+}
+
+.app-sidebar-header,
+.app-sidebar-branch {
+    border-color: color-mix(in srgb, var(--color-primary) 36%, rgba(255, 255, 255, 0.18));
+}
+
+.app-sidebar-logo {
+    background: color-mix(in srgb, var(--color-primary) 54%, #020617 46%);
+    border-color: color-mix(in srgb, var(--color-primary) 40%, rgba(255, 255, 255, 0.38));
+}
+
+.app-sidebar-subtle {
+    color: color-mix(in srgb, #ffffff 72%, var(--color-primary) 28%);
+}
+
+.app-sidebar-close {
+    color: color-mix(in srgb, #ffffff 84%, var(--color-primary) 16%);
+}
+
+.app-sidebar-close:hover,
+.app-sidebar-menu-link:hover {
+    background: color-mix(in srgb, var(--color-primary) 54%, #020617 46%);
+    color: #ffffff;
+}
+
+.app-sidebar-branch-card {
+    background: color-mix(in srgb, var(--color-primary) 46%, #020617 54%);
+    border-color: color-mix(in srgb, var(--color-primary) 36%, rgba(255, 255, 255, 0.2));
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 16%, transparent);
+}
+
+.app-sidebar-section {
+    color: color-mix(in srgb, #ffffff 60%, var(--color-primary) 40%);
+}
+
+.app-sidebar-menu-link {
+    color: color-mix(in srgb, #ffffff 86%, var(--color-primary) 14%);
+}
+
+.app-sidebar-menu-link-active {
+    background: color-mix(in srgb, var(--color-primary) 74%, #ffffff 26%);
+    color: #ffffff;
+    box-shadow: 0 8px 18px color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+
+.laundry-login-wash {
+    background:
+        radial-gradient(circle at calc(18% + (var(--bubble-x) * 2%)) calc(18% + (var(--bubble-y) * 2%)), color-mix(in srgb, var(--color-primary) 22%, transparent), transparent 28%),
+        radial-gradient(circle at calc(82% - (var(--bubble-x) * 2%)) calc(16% - (var(--bubble-y) * 2%)), color-mix(in srgb, var(--color-primary) 16%, #67e8f9 14%, transparent), transparent 24%),
+        linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 9%, #eff6ff), #ecfeff 46%, #f8fafc 100%);
+}
+
+.dark .laundry-login-wash {
+    background:
+        radial-gradient(circle at calc(18% + (var(--bubble-x) * 2%)) calc(18% + (var(--bubble-y) * 2%)), color-mix(in srgb, var(--color-primary) 24%, transparent), transparent 28%),
+        radial-gradient(circle at calc(82% - (var(--bubble-x) * 2%)) calc(16% - (var(--bubble-y) * 2%)), color-mix(in srgb, var(--color-primary) 16%, #67e8f9 8%, transparent), transparent 24%),
+        linear-gradient(135deg, #020617 0%, color-mix(in srgb, var(--color-primary) 24%, #082f49) 48%, #0f172a 100%);
+}
+
+.laundry-bubble {
+    --delay: 0s;
+    --parallax: 16px;
+    position: absolute;
+    border-radius: 9999px;
+    border: 1px solid color-mix(in srgb, var(--color-primary) 42%, rgba(255, 255, 255, 0.65));
+    background:
+        radial-gradient(circle at 30% 28%, rgba(255, 255, 255, 0.95) 0 12%, transparent 13%),
+        radial-gradient(circle at 62% 68%, rgba(255, 255, 255, 0.54), color-mix(in srgb, var(--color-primary) 14%, rgba(186, 230, 253, 0.22)) 58%, color-mix(in srgb, var(--color-primary) 12%, transparent));
+    box-shadow:
+        inset 0 0 18px rgba(255, 255, 255, 0.54),
+        0 18px 40px color-mix(in srgb, var(--color-primary) 16%, transparent);
+    opacity: 0.82;
+    animation: laundry-bubble-float 7s ease-in-out infinite;
+    animation-delay: var(--delay);
+    transform: translate3d(calc(var(--bubble-x) * var(--parallax)), calc(var(--bubble-y) * var(--parallax)), 0);
+    transition: transform 180ms ease-out;
+}
+
+.laundry-wave {
+    position: absolute;
+    left: -10%;
+    right: -10%;
+    height: 18rem;
+    border-radius: 45% 55% 0 0;
+    filter: blur(0.2px);
+}
+
+.laundry-wave-one {
+    bottom: -7rem;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 25%, transparent), rgba(45, 212, 191, 0.18), color-mix(in srgb, var(--color-primary) 22%, transparent));
+    animation: laundry-wave-drift 12s ease-in-out infinite alternate;
+}
+
+.laundry-wave-two {
+    bottom: -10rem;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--color-primary) 20%, #0284c7 8%, transparent), rgba(125, 211, 252, 0.18), rgba(20, 184, 166, 0.2));
+    animation: laundry-wave-drift 15s ease-in-out infinite alternate-reverse;
+}
+
+.laundry-wave-three {
+    bottom: -13rem;
+    height: 20rem;
+    background: linear-gradient(90deg, rgba(255, 255, 255, 0.24), color-mix(in srgb, var(--color-primary) 18%, transparent), rgba(255, 255, 255, 0.16));
+    animation: laundry-wave-drift 18s ease-in-out infinite alternate;
+}
+
+.dark .laundry-bubble {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, rgba(255, 255, 255, 0.18));
+    background:
+        radial-gradient(circle at 30% 28%, rgba(224, 242, 254, 0.75) 0 12%, transparent 13%),
+        radial-gradient(circle at 62% 68%, rgba(186, 230, 253, 0.25), color-mix(in srgb, var(--color-primary) 18%, transparent) 58%, rgba(14, 116, 144, 0.12));
+    opacity: 0.72;
+}
+
+@keyframes laundry-bubble-float {
+    0%, 100% {
+        margin-top: 0;
+        scale: 1;
+    }
+    50% {
+        margin-top: -18px;
+        scale: 1.04;
+    }
+}
+
+@keyframes laundry-wave-drift {
+    from {
+        transform: translateX(-2%) skewY(-1deg);
+    }
+    to {
+        transform: translateX(2%) skewY(1deg);
+    }
+}
+
+.machine-status-card {
+    transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.machine-status-card:hover {
+    transform: translateY(-4px) rotateX(1deg);
+    box-shadow: 0 16px 30px rgba(15, 23, 42, 0.12);
+}
+
+.machine-status-image {
+    will-change: transform, filter;
+}
+
+.machine-status-image-ready {
+    animation: machine-ready-float 3.4s ease-in-out infinite;
+}
+
+.machine-status-image-running {
+    animation: machine-running 850ms ease-in-out infinite;
+}
+
+.machine-status-dot-running {
+    animation: machine-status-pulse 1.25s ease-out infinite;
+}
+
+@keyframes machine-ready-float {
+    0%, 100% {
+        transform: translateY(0) scale(1);
+        filter: drop-shadow(0 5px 8px rgba(34, 197, 94, 0.12));
+    }
+    50% {
+        transform: translateY(-4px) scale(1.015);
+        filter: drop-shadow(0 9px 12px rgba(34, 197, 94, 0.22));
+    }
+}
+
+@keyframes machine-running {
+    0%, 100% {
+        transform: translateX(0) rotate(0deg);
+        filter: drop-shadow(0 5px 8px rgba(239, 68, 68, 0.12));
+    }
+    25% {
+        transform: translateX(-1px) rotate(-0.35deg);
+    }
+    75% {
+        transform: translateX(1px) rotate(0.35deg);
+        filter: drop-shadow(0 8px 12px rgba(239, 68, 68, 0.22));
+    }
+}
+
+@keyframes machine-status-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.45);
+    }
+    70%, 100% {
+        box-shadow: 0 0 0 7px rgba(239, 68, 68, 0);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .machine-status-card,
+    .machine-status-image,
+    .machine-status-dot-running {
+        animation: none !important;
+        transition: none !important;
+        transform: none !important;
+    }
+}
+
+.flatpickr-calendar {
+    border: 1px solid #e2e8f0;
+    border-radius: 0.5rem;
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.14);
+    font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.flatpickr-day.selected,
+.flatpickr-day.startRange,
+.flatpickr-day.endRange,
+.flatpickr-day.selected:hover,
+.flatpickr-day.startRange:hover,
+.flatpickr-day.endRange:hover {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+}
+
+.flatpickr-day.inRange {
+    background: color-mix(in srgb, var(--color-primary) 14%, transparent);
+    border-color: transparent;
+    box-shadow: -5px 0 0 color-mix(in srgb, var(--color-primary) 14%, transparent), 5px 0 0 color-mix(in srgb, var(--color-primary) 14%, transparent);
+}
+
+.dark .flatpickr-calendar,
+.dark .flatpickr-months .flatpickr-month,
+.dark .flatpickr-weekdays,
+.dark .flatpickr-weekday,
+.dark .flatpickr-current-month .flatpickr-monthDropdown-months,
+.dark .flatpickr-current-month input.cur-year {
+    background: #030712;
+    color: #f8fafc;
+}
+
+.dark .flatpickr-calendar {
+    border-color: #1f2937;
+    box-shadow: 0 18px 45px rgba(0, 0, 0, 0.38);
+}
+
+.dark .flatpickr-day {
+    color: #e5e7eb;
+}
+
+.dark .flatpickr-day:hover,
+.dark .flatpickr-day:focus {
+    background: #111827;
+    border-color: #374151;
+}
+
+.dark .flatpickr-day.prevMonthDay,
+.dark .flatpickr-day.nextMonthDay {
+    color: #6b7280;
+}
