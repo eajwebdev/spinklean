@@ -8,6 +8,7 @@ use App\Models\BranchSetting;
 use App\Models\SystemSetting;
 use App\Support\Activity;
 use App\Support\PublicUpload;
+use App\Support\SmsNotifier;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -108,11 +109,11 @@ class SystemSettingController extends Controller
                     'sms_api_key' => ['nullable', 'string'],
                     'unisms_sender_id' => ['nullable', 'string', 'max:50'],
                     'sms_enabled' => ['nullable', 'boolean'],
-                    'sms_template_order_received' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_delivery_received' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_ready_for_pickup' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_ready_for_delivery' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_completed' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_order_received' => ['nullable', 'string', 'max:160'],
+                    'sms_template_delivery_received' => ['nullable', 'string', 'max:160'],
+                    'sms_template_ready_for_pickup' => ['nullable', 'string', 'max:160'],
+                    'sms_template_ready_for_delivery' => ['nullable', 'string', 'max:160'],
+                    'sms_template_completed' => ['nullable', 'string', 'max:160'],
                 ]);
             }
         }
@@ -193,5 +194,30 @@ class SystemSettingController extends Controller
         return redirect()
             ->route('admin.settings.edit', ['branch_id' => $branch->id])
             ->with('success', 'System settings saved successfully.');
+    }
+
+    public function sendTestSms(Request $request)
+    {
+        abort_unless($request->user()->isAdmin(), 403);
+
+        $validated = $request->validate([
+            'test_phone' => ['required', 'string', 'max:20'],
+            'test_message' => ['required', 'string', 'max:670'],
+        ]);
+
+        $log = SmsNotifier::sendTest($validated['test_phone'], $validated['test_message']);
+        $ok = $log->status === 'sent';
+
+        Activity::log($request, 'sms_test_sent', null, [
+            'recipient' => $log->recipient,
+            'status' => $log->status,
+        ]);
+
+        return response()->json([
+            'ok' => $ok,
+            'message' => $ok
+                ? 'Test SMS sent successfully to '.$log->recipient.'.'
+                : ($log->response ?: 'The SMS provider did not accept the message.'),
+        ], $ok ? 200 : 422);
     }
 }

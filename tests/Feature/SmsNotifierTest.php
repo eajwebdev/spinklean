@@ -49,7 +49,7 @@ class SmsNotifierTest extends TestCase
             && $request['recipient'] === '+639171234567'
             && $request['sender_id'] === 'SPINKLEAN'
             && $request['metadata']['sms_log_id'] !== null
-            && str_contains($request['content'], 'ready for pickup'));
+            && stripos($request['content'], 'ready for pickup') !== false);
 
         $this->assertDatabaseHas('sms_logs', [
             'recipient' => '09171234567',
@@ -178,7 +178,7 @@ class SmsNotifierTest extends TestCase
 
         Http::assertSent(fn ($request) => $request->url() === 'https://unismsapi.com/api/sms'
             && $request['recipient'] === '+639171234567'
-            && str_contains($request['content'], 'ready for pickup'));
+            && stripos($request['content'], 'ready for pickup') !== false);
 
         $this->assertDatabaseHas('sms_logs', [
             'recipient' => '09171234567',
@@ -209,9 +209,9 @@ class SmsNotifierTest extends TestCase
         SmsNotifier::jobOrderReceived($order);
 
         $message = (string) SmsLog::query()->value('message');
-        $this->assertStringContainsString('SPIN KLEAN LAUNDRY has received your laundry order', $message);
+        $this->assertStringContainsString('We received your laundry', $message);
         $this->assertStringNotContainsString('picked up', $message);
-        $this->assertStringContainsString('queued for processing', $message);
+        $this->assertStringContainsString('once it is ready', $message);
     }
 
     public function test_custom_sms_template_replaces_order_placeholders(): void

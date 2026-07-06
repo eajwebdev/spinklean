@@ -1202,7 +1202,7 @@ class CycleMonitoringTest extends TestCase
             'status' => 'queued',
         ]);
         $this->assertStringContainsString(
-            'SPIN KLEAN LAUNDRY has picked up and received your laundry order',
+            'We picked up your laundry for delivery',
             (string) \App\Models\SmsLog::query()->value('message')
         );
     }

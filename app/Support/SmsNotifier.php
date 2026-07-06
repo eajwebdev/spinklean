@@ -58,6 +58,30 @@ class SmsNotifier
         });
     }
 
+    /**
+     * Send a one-off test message to an arbitrary number using the saved
+     * provider settings. Returns the SmsLog so the caller can inspect the
+     * resulting status ('sent' on success, 'failed'/'queued' otherwise) and
+     * the human-readable provider response.
+     */
+    public static function sendTest(string $phone, string $message): SmsLog
+    {
+        $settings = SystemSetting::current();
+
+        $log = SmsLog::create([
+            'branch_id' => null,
+            'customer_id' => null,
+            'recipient' => trim($phone),
+            'message' => trim($message),
+            'status' => 'queued',
+            'response' => 'Waiting for SMS provider.',
+        ]);
+
+        self::send($log, $settings);
+
+        return $log->refresh();
+    }
+
     private static function withoutInterruptingOperations(callable $notification): void
     {
         try {
@@ -115,24 +139,24 @@ class SmsNotifier
                 'customer_id' => (string) $log->customer_id,
             ],
         ];
-        $senderId = trim((string) $settings->unisms_sender_id);
+        // UniSMS requires a sender_id (a blank one is rejected). Use the
+        // configured value, falling back to the account's assigned sender so
+        // sending still works on the free tier before a paid sender ID is set.
+        $senderId = trim((string) $settings->unisms_sender_id)
+            ?: (string) config('services.unisms.sender_id', '');
         if ($senderId !== '') {
             $payload['sender_id'] = $senderId;
         }
 
         try {
-            $response = Http::withBasicAuth($secretKey, '')
-                ->acceptJson()
-                ->asJson()
-                ->timeout(10)
-                ->post('https://unismsapi.com/api/sms', $payload);
+            $response = self::postToUniSms($secretKey, $payload);
 
             $responsePayload = $response->json();
             $messageResult = is_array($responsePayload) ? ($responsePayload['message'] ?? $responsePayload) : [];
             $referenceId = $messageResult['reference_id'] ?? null;
             $providerStatus = Str::lower((string) ($messageResult['status'] ?? ''));
             $accepted = $response->created() && ! in_array($providerStatus, ['failed'], true);
-            $error = $messageResult['fail_reason'] ?? $messageResult['message'] ?? $response->body();
+            $error = self::describeUniSmsError($responsePayload, $response, $senderId);
 
             $log->update([
                 'status' => $accepted ? 'sent' : 'failed',
@@ -146,6 +170,47 @@ class SmsNotifier
                 'response' => Str::limit('UniSMS request failed: '.$exception->getMessage(), 1000),
             ]);
         }
+    }
+
+    private static function postToUniSms(string $secretKey, array $payload): \Illuminate\Http\Client\Response
+    {
+        return Http::withBasicAuth($secretKey, '')
+            ->acceptJson()
+            ->asJson()
+            ->timeout(10)
+            ->post('https://unismsapi.com/api/sms', $payload);
+    }
+
+    /**
+     * Turn a UniSMS error response into a readable, actionable message for the
+     * SMS log instead of raw JSON. Sender ID problems (inactive / does not
+     * exist / blank) get explicit guidance since they are the common blocker
+     * on the free tier.
+     */
+    private static function describeUniSmsError(mixed $payload, \Illuminate\Http\Client\Response $response, string $senderId): string
+    {
+        if (is_array($payload) && isset($payload['errors']) && is_array($payload['errors'])) {
+            $errors = $payload['errors'];
+
+            if (isset($errors['sender_id'])) {
+                $reason = is_array($errors['sender_id']) ? implode(', ', $errors['sender_id']) : (string) $errors['sender_id'];
+                $name = $senderId !== '' ? " '{$senderId}'" : '';
+
+                return "Sender ID{$name} {$reason}. Activate or apply for a sender ID in your UniSMS dashboard, then set it in Settings > SMS/API.";
+            }
+
+            $first = collect($errors)->flatten()->first();
+            if (filled($first)) {
+                return (string) $first;
+            }
+        }
+
+        $message = is_array($payload) ? ($payload['message'] ?? null) : null;
+        if (is_array($message)) {
+            $message = $message['fail_reason'] ?? $message['message'] ?? null;
+        }
+
+        return (string) (filled($message) ? $message : $response->body());
     }
 
     private static function normalizePhone(string $phone): string

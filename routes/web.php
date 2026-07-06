@@ -195,5 +195,9 @@ Route::middleware(['auth', 'settings.completed', 'billing.access'])->group(funct
         Route::put('/settings', [SystemSettingController::class, 'update'])
             ->middleware('menu.access:settings')
             ->name('settings.update');
+
+        Route::post('/settings/sms-test', [SystemSettingController::class, 'sendTestSms'])
+            ->middleware('menu.access:settings')
+            ->name('settings.sms-test');
     });
 });

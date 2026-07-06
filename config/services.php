@@ -35,4 +35,10 @@ return [
         ],
     ],
 
+    'unisms' => [
+        // Fallback sender ID used when none is set in System Settings. On the
+        // free UniSMS tier this must be the account's assigned sender.
+        'sender_id' => env('UNISMS_SENDER_ID', 'UnisoftDEV'),
+    ],
+
 ];
