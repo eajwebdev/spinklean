@@ -8,13 +8,20 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
 use App\Models\AttendanceEmployee;
+use App\Models\Branch;
 use App\Models\User;
+use App\Support\Activity;
 
 class LoginController extends Controller
 {
     public function showLogin()
     {
-        return view('auth.login');
+        return view('auth.login', [
+            'branches' => Branch::query()
+                ->where('is_active', true)
+                ->orderBy('name')
+                ->get(),
+        ]);
     }
 
     public function showAttendanceLogin()
@@ -27,6 +34,7 @@ class LoginController extends Controller
         $request->validate([
             'login' => ['required', 'string'],
             'password' => ['required', 'string'],
+            'branch_id' => ['nullable', 'integer', 'exists:branches,id'],
         ]);
 
         $field = filter_var($request->login, FILTER_VALIDATE_EMAIL) ? 'email' : 'username';
@@ -36,12 +44,30 @@ class LoginController extends Controller
         if (!$user || !Hash::check($request->password, $user->password)) {
             return back()
                 ->withErrors(['login' => 'Invalid username/email or password.'])
-                ->onlyInput('login');
+                ->onlyInput('login', 'branch_id');
         }
 
         if ($user->status !== 'active') {
             return back()
                 ->withErrors(['login' => 'Your account is inactive. Please contact administrator.']);
+        }
+
+        // Admins work across every branch, so their branch is never reassigned here.
+        // Branch staff may be working out of another branch today, so the branch they
+        // pick at login becomes their branch and every module scopes to it from there.
+        $previousBranchId = $user->branch_id;
+        $branchId = $previousBranchId;
+
+        if (! $user->isAdmin() && $request->filled('branch_id')) {
+            $branch = Branch::where('is_active', true)->find($request->integer('branch_id'));
+
+            if (! $branch) {
+                return back()
+                    ->withErrors(['branch_id' => 'That branch is unavailable. Please pick another.'])
+                    ->onlyInput('login', 'branch_id');
+            }
+
+            $branchId = $branch->id;
         }
 
         Auth::login($user, $request->boolean('remember'));
@@ -50,7 +76,15 @@ class LoginController extends Controller
 
         $user->update([
             'last_login_at' => now(),
+            'branch_id' => $branchId,
         ]);
+
+        if ((int) $branchId !== (int) $previousBranchId) {
+            Activity::log($request, 'user_branch_switched', $user, [
+                'from_branch_id' => $previousBranchId,
+                'to_branch_id' => $branchId,
+            ], $branchId);
+        }
 
         return match ($user->role) {
             'super_admin' => redirect()->route('dashboard'),

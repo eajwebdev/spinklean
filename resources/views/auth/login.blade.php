@@ -123,6 +123,27 @@
                     @enderror
                 </div>
 
+                <div>
+                    <label for="branch_id" class="mb-1.5 block text-sm font-medium">
+                        Branch
+                        <span class="font-normal text-muted">(branch staff only)</span>
+                    </label>
+                    <select
+                        id="branch_id"
+                        name="branch_id"
+                        class="h-10 w-full rounded-md border border-border bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-gray-700 dark:bg-gray-950"
+                    >
+                        <option value="">Use my assigned branch</option>
+                        @foreach($branches as $branch)
+                            <option value="{{ $branch->id }}" @selected((int) old('branch_id') === (int) $branch->id)>{{ $branch->name }}</option>
+                        @endforeach
+                    </select>
+                    <p class="mt-1.5 text-xs text-muted">Working at another branch today? Pick it here. Admins keep access to all branches.</p>
+                    @error('branch_id')
+                        <p class="mt-2 text-sm text-red-600">{{ $message }}</p>
+                    @enderror
+                </div>
+
                 <div class="flex items-center justify-between">
                     <label class="inline-flex cursor-pointer items-center gap-2 text-sm text-muted">
                         <input type="checkbox" name="remember" value="1" x-model="remember" class="sr-only">
