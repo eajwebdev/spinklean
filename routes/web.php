@@ -27,6 +27,10 @@ use App\Http\Controllers\PublicUploadController;
 use App\Http\Controllers\Auth\LoginController;
 use Illuminate\Support\Facades\Route;
 
+Route::get('/pay', function () {
+    return view('pay');
+});
+
 Route::get('/uploads/{path}', [PublicUploadController::class, 'show'])
     ->where('path', '.*')
     ->name('uploads.show');
