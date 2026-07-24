@@ -44,7 +44,14 @@ class EmployeeController extends Controller
     {
         $validated = $request->validate($this->rules($request));
         $validated = $this->normalizeBranch($request, $validated);
-        $validated['password'] = Hash::make($validated['password'] ?? 'password123');
+        
+        // Check if password is provided, otherwise use default
+        if ($request->filled('password')) {
+            $validated['password'] = Hash::make($validated['password']);
+        } else {
+            $validated['password'] = Hash::make('password123');
+        }
+        
         $validated['status'] = $request->boolean('is_active', true) ? 'active' : 'inactive';
 
         AttendanceEmployee::create($validated);
@@ -60,12 +67,18 @@ class EmployeeController extends Controller
         $validated = $this->normalizeBranch($request, $validated);
         $validated['status'] = $request->boolean('is_active') ? 'active' : 'inactive';
 
-        if (! empty($validated['password'])) {
-            $validated['password'] = Hash::make($validated['password']);
+        // FIX: Handle password update properly
+        // Check if password field is present and not empty
+        if ($request->filled('password')) {
+            // Hash the new password
+            $validated['password'] = Hash::make($request->password);
         } else {
+            // IMPORTANT: Remove password from validated array to prevent overwriting with null
+            // This preserves the existing password in the database
             unset($validated['password']);
         }
 
+        // Update the employee with the validated data (password will only be updated if provided)
         $employee->update($validated);
 
         return back()->with('success', 'Employee updated successfully.');
@@ -81,15 +94,24 @@ class EmployeeController extends Controller
 
     private function rules(Request $request, ?AttendanceEmployee $employee = null): array
     {
-        return [
+        $rules = [
             'branch_id' => [$request->user()->isAdmin() ? 'required' : 'nullable', 'exists:branches,id'],
             'first_name' => ['required', 'string', 'max:255'],
             'last_name' => ['required', 'string', 'max:255'],
             'phone' => ['nullable', 'string', 'max:50'],
             'username' => ['required', 'string', 'max:100', Rule::unique('attendance_employees', 'username')->ignore($employee?->id)],
-            'password' => ['nullable', 'string', 'min:6'],
             'is_active' => ['nullable', 'boolean'],
         ];
+
+        // Only add password validation if password is being updated
+        if ($employee && $request->filled('password')) {
+            $rules['password'] = ['nullable', 'string', 'min:6'];
+        } elseif (!$employee) {
+            // For store, password is optional but validate if provided
+            $rules['password'] = ['nullable', 'string', 'min:6'];
+        }
+
+        return $rules;
     }
 
     private function normalizeBranch(Request $request, array $validated): array
