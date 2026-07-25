@@ -314,6 +314,7 @@ class SmsNotifier
         $status = Str::headline((string) $order->status);
         $total = $currency.' '.number_format((float) $order->total, 2);
         $balance = $currency.' '.number_format((float) $order->balance, 2);
+        $price = $currency.' '.number_format((float) $order->total, 2);
 
         return [
             // Canonical placeholders
@@ -324,6 +325,7 @@ class SmsNotifier
             '{branch_name}' => $branchName,
             '{status}' => $status,
             '{total}' => $total,
+            '{price}' => $price,
             '{balance}' => $balance,
             // Short aliases (case-insensitive variants handled in renderTemplate)
             '{name}' => $name,

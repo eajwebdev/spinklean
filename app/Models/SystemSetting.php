@@ -72,11 +72,11 @@ class SystemSetting extends Model
     public static function defaultSmsTemplates(): array
     {
         return [
-            'sms_template_order_received' => 'Hi {name}! We received your laundry at {branch}. Order #{order_no}. Keep this no. for claiming/inquiries. We will text you once it is ready. Thank you!',
-            'sms_template_delivery_received' => 'Hi {name}! We picked up your laundry for delivery ({branch}). Order #{order_no}. Keep this no. for inquiries. We will text you once ready. Thank you!',
-            'sms_template_ready_for_pickup' => 'Hi {name}! Your laundry Order #{order_no} is ready for PICKUP at {branch}. Total: {total}. Please bring this order no. Thank you!',
-            'sms_template_ready_for_delivery' => 'Hi {name}! Your laundry Order #{order_no} is ready and out for DELIVERY. Total: {total}, Balance: {balance}. Thank you!',
-            'sms_template_completed' => 'Hi {name}! Your laundry Order #{order_no} is now completed. Total: {total}, Balance: {balance}. Thank you for choosing {store}!',
+            'sms_template_order_received' => 'Hi {name}! We received your laundry at {branch}. Order #{order_no}. Total: {price}. Keep this no. for claiming/inquiries. We will text you once it is ready. Thank you!',
+            'sms_template_delivery_received' => 'Hi {name}! We picked up your laundry for delivery ({branch}). Order #{order_no}. Total: {price}. Keep this no. for inquiries. We will text you once ready. Thank you!',
+            'sms_template_ready_for_pickup' => 'Hi {name}! Your laundry Order #{order_no} is ready for PICKUP at {branch}. Total: {price}. Please bring this order no. Thank you!',
+            'sms_template_ready_for_delivery' => 'Hi {name}! Your laundry Order #{order_no} is ready and out for DELIVERY. Total: {price}, Balance: {balance}. Thank you!',
+            'sms_template_completed' => 'Hi {name}! Your laundry Order #{order_no} is now completed. Total: {price}, Balance: {balance}. Thank you for choosing {store}!',
         ];
     }
 
