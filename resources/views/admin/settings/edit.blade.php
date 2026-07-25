@@ -8,8 +8,8 @@
         tab: @js($canManageGlobal ? 'business' : 'branch'),
         logoPreview: null,
         vatEnabled: @js($settings->vat_enabled),
-        smsEnabled: @js($settings->sms_enabled),
-        smsProvider: @js(old('sms_provider', $settings->sms_provider ?: 'unisms')),
+        smsEnabled: @js(old('sms_enabled', $branchSetting->sms_enabled ?? $settings->sms_enabled)),
+        smsProvider: @js(old('sms_provider', $branchSetting->sms_provider ?? $settings->sms_provider ?: 'unisms')),
         darkDefault: @js($settings->dark_mode_default)
     }"
     class="space-y-4"
@@ -265,12 +265,12 @@
 
                     <div x-show="smsProvider === 'unisms'">
                         <label class="block text-sm font-medium mb-2">UniSMS API Secret Key</label>
-                        <input type="password" name="sms_api_key" value="{{ old('sms_api_key', $settings->sms_api_key) }}" autocomplete="new-password" class="w-full h-9 rounded-md border border-border dark:border-gray-700 bg-white dark:bg-gray-950 px-3 text-sm">
+                        <input type="password" name="sms_api_key" value="{{ old('sms_api_key', $branchSetting->sms_api_key ?? $settings->sms_api_key) }}" autocomplete="new-password" class="w-full h-9 rounded-md border border-border dark:border-gray-700 bg-white dark:bg-gray-950 px-3 text-sm">
                     </div>
 
                     <div x-show="smsProvider === 'unisms'">
                         <label class="block text-sm font-medium mb-2">UniSMS Sender ID</label>
-                        <input name="unisms_sender_id" value="{{ old('unisms_sender_id', $settings->unisms_sender_id) }}" placeholder="Optional approved sender ID" class="w-full h-9 rounded-md border border-border dark:border-gray-700 bg-white dark:bg-gray-950 px-3 text-sm">
+                        <input name="unisms_sender_id" value="{{ old('unisms_sender_id', $branchSetting->unisms_sender_id ?? $settings->unisms_sender_id) }}" placeholder="Optional approved sender ID" class="w-full h-9 rounded-md border border-border dark:border-gray-700 bg-white dark:bg-gray-950 px-3 text-sm">
                         <p class="mt-1 text-xs text-muted">Optional. Use only after UniSMS approves your business sender ID.</p>
                     </div>
 

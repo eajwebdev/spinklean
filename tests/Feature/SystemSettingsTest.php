@@ -194,6 +194,56 @@ class SystemSettingsTest extends TestCase
         ]);
     }
 
+    public function test_sms_provider_api_key_and_sender_id_sync_to_all_branch_settings(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $branch = $this->createBranch();
+        $secondBranch = Branch::query()->create([
+            'name' => 'Second Branch',
+            'code' => 'SEC',
+            'address' => '456 Other Street',
+            'contact_number' => '09170000001',
+            'is_active' => true,
+        ]);
+        $admin = User::factory()->create([
+            'role' => 'super_admin',
+            'branch_id' => $branch->id,
+            'access' => ['settings'],
+        ]);
+
+        $this->actingAs($admin)
+            ->put(route('admin.settings.update'), [
+                'branch_id' => $branch->id,
+                'branch_name' => $branch->name,
+                'branch_code' => $branch->code,
+                'branch_address' => $branch->address,
+                'branch_contact' => $branch->contact_number,
+                'branch_type' => 'full_service',
+                'machine_count' => 5,
+                'business_name' => 'Shared SMS Laundry',
+                'contact_number' => '09171234567',
+                'business_address' => 'Manila',
+                'currency' => 'PHP',
+                'primary_color' => '#0EA5E9',
+                'sms_enabled' => '1',
+                'sms_provider' => 'unisms',
+                'sms_api_key' => 'shared-secret',
+                'unisms_sender_id' => 'SPIN',
+            ])
+            ->assertRedirect(route('admin.settings.edit', ['branch_id' => $branch->id]));
+
+        foreach ([$branch, $secondBranch] as $targetBranch) {
+            $branchSetting = BranchSetting::query()->where('branch_id', $targetBranch->id)->first();
+
+            $this->assertNotNull($branchSetting);
+            $this->assertSame('unisms', $branchSetting->sms_provider);
+            $this->assertSame('shared-secret', $branchSetting->sms_api_key);
+            $this->assertSame('SPIN', $branchSetting->unisms_sender_id);
+        }
+    }
+
     public function test_settings_rejects_too_long_branch_address_cleanly(): void
     {
         $this->completeSystemSettings();

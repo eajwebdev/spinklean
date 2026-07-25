@@ -2,6 +2,7 @@
 
 namespace App\Support;
 
+use App\Models\BranchSetting;
 use App\Models\JobOrder;
 use App\Models\SmsLog;
 use App\Models\SystemSetting;
@@ -13,8 +14,8 @@ class SmsNotifier
     public static function jobOrderReceived(JobOrder $order): void
     {
         self::withoutInterruptingOperations(function () use ($order): void {
-            $settings = SystemSetting::current();
             $order->loadMissing(['branch', 'customer']);
+            $settings = self::resolveSettings($order->branch_id);
             $customer = $order->customer;
 
             if (! $settings->sms_enabled || ! $customer?->canReceiveSms()) {
@@ -33,8 +34,8 @@ class SmsNotifier
     public static function jobOrderStatus(JobOrder $order): void
     {
         self::withoutInterruptingOperations(function () use ($order): void {
-            $settings = SystemSetting::current();
             $order->loadMissing(['branch', 'customer']);
+            $settings = self::resolveSettings($order->branch_id);
             $customer = $order->customer;
 
             if (! $settings->sms_enabled || ! $customer?->canReceiveSms()) {
@@ -66,7 +67,7 @@ class SmsNotifier
      */
     public static function sendTest(string $phone, string $message): SmsLog
     {
-        $settings = SystemSetting::current();
+        $settings = self::resolveSettings();
 
         $log = SmsLog::create([
             'branch_id' => null,
@@ -104,6 +105,34 @@ class SmsNotifier
         ]);
 
         self::send($log, $settings);
+    }
+
+    private static function resolveSettings(?int $branchId = null): SystemSetting
+    {
+        $settings = SystemSetting::current();
+
+        if (! $branchId) {
+            return $settings;
+        }
+
+        $branchSetting = BranchSetting::query()->where('branch_id', $branchId)->first();
+
+        if (! $branchSetting) {
+            return $settings;
+        }
+
+        $values = array_filter([
+            'sms_provider' => $branchSetting->sms_provider ?? null,
+            'sms_api_key' => $branchSetting->sms_api_key ?? null,
+            'unisms_sender_id' => $branchSetting->unisms_sender_id ?? null,
+            'sms_enabled' => $branchSetting->sms_enabled ?? null,
+        ], fn ($value) => $value !== null);
+
+        if ($values !== []) {
+            $settings->fill($values);
+        }
+
+        return $settings;
     }
 
     private static function send(SmsLog $log, SystemSetting $settings): void

@@ -16,6 +16,10 @@ class BranchSetting extends Model
         'default_price_per_piece',
         'job_order_prefix',
         'invoice_prefix',
+        'sms_provider',
+        'sms_api_key',
+        'unisms_sender_id',
+        'sms_enabled',
     ];
 
     protected $casts = [
