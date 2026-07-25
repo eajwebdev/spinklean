@@ -65,18 +65,18 @@ class SystemSetting extends Model
     }
 
     /**
-     * Default SMS templates. Kept short and detailed so each notification
-     * stays close to a single 160-character SMS segment (1 credit). All
-     * placeholders resolve case-insensitively via SmsNotifier.
+     * Default SMS templates. These are written in a more formal tone so
+     * customer notifications feel professional and polished. All placeholders
+     * resolve case-insensitively via SmsNotifier.
      */
     public static function defaultSmsTemplates(): array
     {
         return [
-            'sms_template_order_received' => "Hi {name}! Recv JO #{order_no} at {branch}. Total: {price}. Pay: https://spinklean.online/pay. We'll msg when ready. Tnk u!",
-            'sms_template_delivery_received' => "Hi {name}! Picked up JO #{order_no} for delivery ({branch}). Total: {price}. Pay: https://spinklean.online/pay. We'll msg when ready!",
-            'sms_template_ready_for_pickup' => "Hi {name}! JO #{order_no} is READY FOR PICKUP at {branch}. Bal: {balance}. Pay: https://spinklean.online/pay. Pls bring JO #. Tnk u!",
-            'sms_template_ready_for_delivery' => "Hi {name}! JO #{order_no} is READY FOR DELIVERY. Bal: {balance}. Pay: https://spinklean.online/pay. Tnk u - {store}!",
-            'sms_template_completed' => "Hi {name}! JO #{order_no} is COMPLETED. Bal: {balance}. Pay: https://spinklean.online/pay. Tnk u for choosing {store}!",
+            'sms_template_order_received' => "Dear {name}, thank you for choosing {store}. We have received your laundry order #{order_no} at {branch} for a total of {price}. You may pay online via https://spinklean.online/pay. We will notify you once your order is ready.",
+            'sms_template_delivery_received' => "Dear {name}, thank you for choosing {store}. We have picked up your laundry order #{order_no} ({branch}) for a total of {price}. You may pay online via https://spinklean.online/pay. We will notify you once it is ready for delivery.",
+            'sms_template_ready_for_pickup' => "Dear {name}, your laundry order #{order_no} is now READY FOR PICKUP at {branch}. Remaining balance: {balance}. You may pay online via https://spinklean.online/pay. Please present your order number upon pickup. Thank you!",
+            'sms_template_ready_for_delivery' => "Dear {name}, your laundry order #{order_no} is now READY AND OUT FOR DELIVERY. Remaining balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}!",
+            'sms_template_completed' => "Dear {name}, your laundry order #{order_no} has been COMPLETED. Total: {price}, Balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}! We appreciate your business.",
         ];
     }
 
