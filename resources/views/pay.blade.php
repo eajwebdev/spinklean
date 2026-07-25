@@ -390,7 +390,7 @@
 
     <div class="qr" id="qrContainer">
       <b></b><b></b><b></b><b></b>
-      <!-- QR image – replace 'uploads/pay.png' with your actual image path -->
+      <!-- QR image – using Blade's asset helper -->
       <img id="qrImage" src="{{ asset('uploads/pay.png') }}" alt="QR code for paying Spin Klean Laundry JP">
     </div>
 
@@ -438,32 +438,48 @@
     var downloadBtn = document.getElementById('downloadQrBtn');
     var qrImg = document.getElementById('qrImage');
 
-    // Ensure the download link points to the actual image source
-    // If the image src uses a placeholder or dynamic route, we handle it.
+    // Function to get the actual image URL
+    function getImageUrl() {
+      var src = qrImg.getAttribute('src');
+      if (src && !src.startsWith('data:')) {
+        // If it's a relative path, make it absolute
+        try {
+          return new URL(src, window.location.href).href;
+        } catch (e) {
+          return src;
+        }
+      }
+      return src;
+    }
+
+    // Function to set the download link
     function setDownloadLink() {
-      // Use the current src of the img element.
-      var imgSrc = qrImg.getAttribute('src');
-      if (imgSrc) {
-        // If it's a relative path, make it absolute for download.
-        var absUrl = new URL(imgSrc, window.location.href).href;
-        downloadBtn.setAttribute('href', absUrl);
-        // Ensure the filename is meaningful
-        downloadBtn.setAttribute('download', 'SpinKlean_QR.png');
+      var url = getImageUrl();
+      if (url && url !== '#') {
+        downloadBtn.href = url;
+        downloadBtn.download = 'SpinKlean_QR.png';
       } else {
-        // fallback: if no src, use a data-uri placeholder (should not happen)
-        downloadBtn.setAttribute('href', '#');
-        downloadBtn.setAttribute('download', '');
+        // Fallback: if no valid URL, we'll try to use canvas to generate
+        // But we keep it simple
+        downloadBtn.href = '#';
+        downloadBtn.download = '';
+        console.warn('QR image not found. Download may not work.');
       }
     }
 
-    // In case the image loads lazily or changes, we set the link after load.
-    if (qrImg.complete) {
+    // Set the download link when the image loads or is ready
+    if (qrImg.complete && qrImg.naturalWidth > 0) {
       setDownloadLink();
     } else {
       qrImg.addEventListener('load', setDownloadLink);
+      qrImg.addEventListener('error', function() {
+        console.warn('QR image failed to load. Download may not work.');
+        // Try to set anyway
+        setDownloadLink();
+      });
     }
-    // Also if the image src is updated later (e.g., by Vite), we watch.
-    // A simple MutationObserver can catch attribute changes.
+
+    // Also if the image src is updated later
     var observer = new MutationObserver(function(mutations) {
       mutations.forEach(function(mutation) {
         if (mutation.attributeName === 'src') {
@@ -473,22 +489,18 @@
     });
     observer.observe(qrImg, { attributes: true });
 
-    // If for any reason the download still points to a placeholder (like {{ asset }})
-    // we can force a canvas-based fallback: but we keep it simple, the download uses the img src.
-    // Also handle when the image fails to load.
-    qrImg.addEventListener('error', function() {
-      // Optionally set a fallback QR (but we keep the broken link)
-      console.warn('QR image failed to load. Download may not work.');
-    });
-
-    // For extra safety, also set the link on page load.
+    // Additional safety: set on window load
     window.addEventListener('load', function() {
       setDownloadLink();
     });
 
+    // If image fails completely, we still set the link as best as possible
+    setTimeout(function() {
+      setDownloadLink();
+    }, 1000);
+
   })();
 </script>
 
-<!-- small note: the QR image is fetched from 'uploads/pay.png' – you can replace with your own -->
 </body>
 </html>
