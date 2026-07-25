@@ -152,38 +152,38 @@ class SystemSettingController extends Controller
             'invoice_prefix' => $validated['invoice_prefix'] ?? null,
         ];
 
+        $branchSmsSettingsPayload = [];
+
         if ($canManageGlobal && $canManageSms) {
-            $branchSettingsPayload = array_merge($branchSettingsPayload, [
-                'sms_provider' => $validated['sms_provider'] ?? null,
-                'sms_api_key' => $validated['sms_api_key'] ?? null,
-                'unisms_sender_id' => $validated['unisms_sender_id'] ?? null,
-                'sms_enabled' => $request->boolean('sms_enabled'),
-            ]);
+            $branchSmsSettingsPayload = [
+                'sms_provider' => $request->has('sms_provider') ? ($validated['sms_provider'] ?? null) : ($settings->sms_provider ?? null),
+                'sms_api_key' => $request->has('sms_api_key') ? ($validated['sms_api_key'] ?? null) : ($settings->sms_api_key ?? null),
+                'unisms_sender_id' => $request->has('unisms_sender_id') ? ($validated['unisms_sender_id'] ?? null) : ($settings->unisms_sender_id ?? null),
+                'sms_enabled' => $request->has('sms_enabled') ? $request->boolean('sms_enabled') : ($settings->sms_enabled ?? false),
+            ];
         }
 
         BranchSetting::updateOrCreate(
             ['branch_id' => $branch->id],
-            $branchSettingsPayload
+            array_merge($branchSettingsPayload, $branchSmsSettingsPayload)
         );
 
         if ($canManageGlobal && $canManageSms) {
-            $branchesToSync = Branch::query()->where('is_active', true)->get();
+            $activeBranchIds = Branch::query()->where('is_active', true)->pluck('id');
 
-            foreach ($branchesToSync as $branchToSync) {
-                BranchSetting::updateOrCreate(
-                    ['branch_id' => $branchToSync->id],
+            foreach ($activeBranchIds as $activeBranchId) {
+                $branchSetting = BranchSetting::firstOrCreate(
+                    ['branch_id' => $activeBranchId],
                     [
-                        'receipt_header' => $branchSettingsPayload['receipt_header'],
-                        'receipt_footer' => $branchSettingsPayload['receipt_footer'],
-                        'operating_hours' => $branchSettingsPayload['operating_hours'],
-                        'job_order_prefix' => $branchSettingsPayload['job_order_prefix'],
-                        'invoice_prefix' => $branchSettingsPayload['invoice_prefix'],
-                        'sms_provider' => $branchSettingsPayload['sms_provider'],
-                        'sms_api_key' => $branchSettingsPayload['sms_api_key'],
-                        'unisms_sender_id' => $branchSettingsPayload['unisms_sender_id'],
-                        'sms_enabled' => $branchSettingsPayload['sms_enabled'],
+                        'receipt_header' => $settings->receipt_header,
+                        'receipt_footer' => $settings->receipt_footer,
+                        'operating_hours' => $settings->operating_hours,
+                        'job_order_prefix' => $settings->job_order_prefix,
+                        'invoice_prefix' => $settings->invoice_prefix,
                     ]
                 );
+
+                $branchSetting->fill($branchSmsSettingsPayload)->save();
             }
         }
 
