@@ -72,11 +72,11 @@ class SystemSetting extends Model
     public static function defaultSmsTemplates(): array
     {
         return [
-            'sms_template_order_received' => 'Hi {name}! We received your laundry at {branch}. Order #{order_no}. Total: {price}. Keep this no. for claiming/inquiries. We will text you once it is ready. Thank you!',
-            'sms_template_delivery_received' => 'Hi {name}! We picked up your laundry for delivery ({branch}). Order #{order_no}. Total: {price}. Keep this no. for inquiries. We will text you once ready. Thank you!',
-            'sms_template_ready_for_pickup' => 'Hi {name}! Your laundry Order #{order_no} is ready for PICKUP at {branch}. Total: {price}. Please bring this order no. Thank you!',
-            'sms_template_ready_for_delivery' => 'Hi {name}! Your laundry Order #{order_no} is ready and out for DELIVERY. Total: {price}, Balance: {balance}. Thank you!',
-            'sms_template_completed' => 'Hi {name}! Your laundry Order #{order_no} is now completed. Total: {price}, Balance: {balance}. Thank you for choosing {store}!',
+            'sms_template_order_received' => "Hi {name}! Recv JO #{order_no} at {branch}. Total: {price}. Pay: https://spinklean.online/pay. We'll msg when ready. Tnk u!",
+            'sms_template_delivery_received' => "Hi {name}! Picked up JO #{order_no} for delivery ({branch}). Total: {price}. Pay: https://spinklean.online/pay. We'll msg when ready!",
+            'sms_template_ready_for_pickup' => "Hi {name}! JO #{order_no} is READY FOR PICKUP at {branch}. Bal: {balance}. Pay: https://spinklean.online/pay. Pls bring JO #. Tnk u!",
+            'sms_template_ready_for_delivery' => "Hi {name}! JO #{order_no} is READY FOR DELIVERY. Bal: {balance}. Pay: https://spinklean.online/pay. Tnk u - {store}!",
+            'sms_template_completed' => "Hi {name}! JO #{order_no} is COMPLETED. Bal: {balance}. Pay: https://spinklean.online/pay. Tnk u for choosing {store}!",
         ];
     }
 

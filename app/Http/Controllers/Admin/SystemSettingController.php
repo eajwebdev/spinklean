@@ -122,11 +122,11 @@ class SystemSettingController extends Controller
                     'sms_api_key' => ['nullable', 'string'],
                     'unisms_sender_id' => ['nullable', 'string', 'max:50'],
                     'sms_enabled' => ['nullable', 'boolean'],
-                    'sms_template_order_received' => ['nullable', 'string', 'max:160'],
-                    'sms_template_delivery_received' => ['nullable', 'string', 'max:160'],
-                    'sms_template_ready_for_pickup' => ['nullable', 'string', 'max:160'],
-                    'sms_template_ready_for_delivery' => ['nullable', 'string', 'max:160'],
-                    'sms_template_completed' => ['nullable', 'string', 'max:160'],
+                    'sms_template_order_received' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_delivery_received' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_ready_for_pickup' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_ready_for_delivery' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_completed' => ['nullable', 'string', 'max:1000'],
                 ]);
             }
         }
@@ -165,10 +165,10 @@ class SystemSettingController extends Controller
 
         if ($canManageGlobal && $canManageSms) {
             $branchSmsSettingsPayload = [
-                'sms_provider' => $request->has('sms_provider') ? ($validated['sms_provider'] ?? null) : ($settings->sms_provider ?? null),
-                'sms_api_key' => $request->has('sms_api_key') ? ($validated['sms_api_key'] ?? null) : ($settings->sms_api_key ?? null),
-                'unisms_sender_id' => $request->has('unisms_sender_id') ? ($validated['unisms_sender_id'] ?? null) : ($settings->unisms_sender_id ?? null),
-                'sms_enabled' => $request->has('sms_enabled') ? $request->boolean('sms_enabled') : ($settings->sms_enabled ?? false),
+                'sms_provider' => $validated['sms_provider'] ?? $settings->sms_provider ?? 'unisms',
+                'sms_api_key' => $validated['sms_api_key'] ?? $settings->sms_api_key,
+                'unisms_sender_id' => $validated['unisms_sender_id'] ?? $settings->unisms_sender_id,
+                'sms_enabled' => $request->boolean('sms_enabled'),
             ];
         }
 

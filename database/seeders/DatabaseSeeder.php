@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             InventorySeeder::class,
             ServiceInventoryUsageSeeder::class,
             BranchSettingSeeder::class,
+            SmsTemplateSeeder::class,
         ]);
     }
 }

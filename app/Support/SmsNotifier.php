@@ -121,15 +121,17 @@ class SmsNotifier
             return $settings;
         }
 
-        $values = array_filter([
-            'sms_provider' => $branchSetting->sms_provider ?? null,
-            'sms_api_key' => $branchSetting->sms_api_key ?? null,
-            'unisms_sender_id' => $branchSetting->unisms_sender_id ?? null,
-            'sms_enabled' => $branchSetting->sms_enabled ?? null,
-        ], fn ($value) => $value !== null);
-
-        if ($values !== []) {
-            $settings->fill($values);
+        if (filled($branchSetting->sms_provider)) {
+            $settings->sms_provider = $branchSetting->sms_provider;
+        }
+        if (filled($branchSetting->sms_api_key)) {
+            $settings->sms_api_key = $branchSetting->sms_api_key;
+        }
+        if (filled($branchSetting->unisms_sender_id)) {
+            $settings->unisms_sender_id = $branchSetting->unisms_sender_id;
+        }
+        if ($branchSetting->sms_enabled !== null) {
+            $settings->sms_enabled = (bool) $branchSetting->sms_enabled;
         }
 
         return $settings;

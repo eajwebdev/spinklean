@@ -435,7 +435,11 @@ class JobOrderController extends Controller
             return redirect()->route('admin.job-orders.index')->with('success', 'Job order created successfully.');
         });
 
-        if ($request->boolean('send_sms') && $createdOrder) {
+        $shouldSendSms = $request->has('send_sms')
+            ? $request->boolean('send_sms')
+            : SystemSetting::current()->sms_enabled;
+
+        if ($shouldSendSms && $createdOrder) {
             SmsNotifier::jobOrderReceived($createdOrder);
         }
 

@@ -438,7 +438,7 @@
                     
                     <!-- SMS Notification -->
                     <label x-show="!isEditing" class="flex items-start gap-2 rounded-lg border border-border p-3 dark:border-gray-800" :class="canSendSms ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'">
-                        <input type="checkbox" name="send_sms" value="1" :disabled="!canSendSms" class="mt-0.5 rounded border-border text-primary">
+                        <input type="checkbox" name="send_sms" value="1" :disabled="!canSendSms" :checked="canSendSms" class="mt-0.5 rounded border-border text-primary">
                         <span>
                             <span class="block text-sm font-medium">Send order received SMS</span>
                             <span class="block text-xs text-muted" x-text="smsAvailabilityMessage"></span>
