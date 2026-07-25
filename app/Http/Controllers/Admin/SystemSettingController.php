@@ -122,11 +122,11 @@ class SystemSettingController extends Controller
                     'sms_api_key' => ['nullable', 'string'],
                     'unisms_sender_id' => ['nullable', 'string', 'max:50'],
                     'sms_enabled' => ['nullable', 'boolean'],
-                    'sms_template_order_received' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_delivery_received' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_ready_for_pickup' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_ready_for_delivery' => ['nullable', 'string', 'max:1000'],
-                    'sms_template_completed' => ['nullable', 'string', 'max:1000'],
+                    'sms_template_order_received' => ['nullable', 'string'],
+                    'sms_template_delivery_received' => ['nullable', 'string'],
+                    'sms_template_ready_for_pickup' => ['nullable', 'string'],
+                    'sms_template_ready_for_delivery' => ['nullable', 'string'],
+                    'sms_template_completed' => ['nullable', 'string'],
                 ]);
             }
         }

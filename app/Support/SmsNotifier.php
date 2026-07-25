@@ -265,16 +265,7 @@ class SmsNotifier
 
     private static function smsContent(string $message): string
     {
-        // UniSMS accepts up to 670 characters per message (multi-part SMS).
-        // Use mb_* so multi-byte characters (emoji, ñ, curly quotes) are
-        // counted and cut on character boundaries, not bytes.
-        $message = trim($message);
-
-        if (mb_strlen($message) <= 670) {
-            return $message;
-        }
-
-        return mb_substr($message, 0, 670);
+        return trim($message);
     }
 
     private static function renderTemplate(SystemSetting $settings, string $templateKey, JobOrder $order): string
