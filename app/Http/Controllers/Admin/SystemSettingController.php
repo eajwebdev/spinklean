@@ -55,6 +55,15 @@ class SystemSettingController extends Controller
             ]
         );
 
+        if ($canManageGlobal && $canManageSms) {
+            $branchSetting->fill([
+                'sms_provider' => $settings->sms_provider,
+                'sms_api_key' => $settings->sms_api_key,
+                'unisms_sender_id' => $settings->unisms_sender_id,
+                'sms_enabled' => $settings->sms_enabled,
+            ])->save();
+        }
+
         return view('admin.settings.edit', compact('settings', 'branch', 'branches', 'branchSetting', 'canManageGlobal', 'canManageSms', 'canChooseBranch'));
     }
 
