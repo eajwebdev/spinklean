@@ -71,6 +71,16 @@
                         <p class="text-sm font-semibold">{{ $noticeTitle }}</p>
                         <p class="mt-1 text-sm leading-5">{{ $billingBanner['message'] }}</p>
 
+                        @if(! empty($billingBanner['payRecordId']) && Route::has('admin.billing.pay.qr'))
+                            <form method="POST" action="{{ route('admin.billing.pay.qr', $billingBanner['payRecordId']) }}" class="mt-3">
+                                @csrf
+                                <button type="submit" class="inline-flex h-8 items-center gap-2 rounded-md bg-primary px-3 text-xs font-semibold text-white hover:opacity-90">
+                                    <span data-lucide="qr-code" class="h-3.5 w-3.5"></span>
+                                    Scan to Pay
+                                </button>
+                            </form>
+                        @endif
+
                         @if(Route::has('admin.billing.index') && auth()->user()?->role === 'super_admin')
                             <a href="{{ route('admin.billing.index') }}" class="mt-3 inline-flex h-8 items-center gap-2 rounded-md border border-current/20 px-2.5 text-xs font-medium hover:bg-black/5 dark:hover:bg-white/5">
                                 <span data-lucide="payments" class="h-3.5 w-3.5"></span>

@@ -8,6 +8,7 @@ use App\Models\BranchBillingRecord;
 use App\Models\BranchExpense;
 use App\Models\SystemSetting;
 use App\Models\SystemTrialSetting;
+use App\Services\SubscriptionBillingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +17,10 @@ use Illuminate\Validation\Rule;
 
 class BillingController extends Controller
 {
+    public function __construct(private SubscriptionBillingService $billing)
+    {
+    }
+
     public function index(Request $request)
     {
         $filters = $request->validate([
@@ -108,34 +113,36 @@ class BillingController extends Controller
             'branches' => ['required', 'array', 'min:1'],
             'branches.*' => ['integer', 'exists:branches,id'],
             'subscription_start_date' => ['required', 'date'],
-            'subscription_end_date' => ['required', 'date', 'after_or_equal:subscription_start_date'],
-            'prices' => ['required', 'array'],
-            'prices.*' => ['required', 'numeric', 'min:0'],
-            'due_date' => ['required', 'date', 'after_or_equal:subscription_start_date'],
+            'subscription_end_date' => ['nullable', 'date', 'after_or_equal:subscription_start_date'],
+            'prices' => ['nullable', 'array'],
+            'prices.*' => ['nullable', 'numeric', 'min:0'],
+            'due_date' => ['nullable', 'date'],
             'update_unpaid' => ['nullable', 'boolean'],
         ]);
 
-        foreach ($validated['branches'] as $branchId) {
-            if (! array_key_exists($branchId, $validated['prices'])) {
-                throw ValidationException::withMessages([
-                    "prices.{$branchId}" => 'Each selected branch must have its own monthly price.',
-                ]);
-            }
-        }
+        $branchModels = Branch::whereIn('id', $validated['branches'])->get()->keyBy('id');
 
         $created = 0;
         $updated = 0;
         $skipped = 0;
 
-        DB::transaction(function () use ($validated, $request, &$created, &$updated, &$skipped): void {
-            $startDate = Carbon::parse($validated['subscription_start_date'])->toDateString();
-            $endDate = Carbon::parse($validated['subscription_end_date'])->toDateString();
-            $dueDate = Carbon::parse($validated['due_date'])->toDateString();
-            $billingMonth = Carbon::parse($startDate)->month;
-            $billingYear = Carbon::parse($startDate)->year;
+        DB::transaction(function () use ($validated, $branchModels, $request, &$created, &$updated, &$skipped): void {
+            $start = Carbon::parse($validated['subscription_start_date'])->startOfDay();
+            $startDate = $start->toDateString();
+            // Due date and period end are auto-derived unless explicitly overridden.
+            $endDate = ! empty($validated['subscription_end_date'])
+                ? Carbon::parse($validated['subscription_end_date'])->toDateString()
+                : $this->billing->periodEnd($start)->toDateString();
+            $dueDate = ! empty($validated['due_date'])
+                ? Carbon::parse($validated['due_date'])->toDateString()
+                : $startDate;
+            $billingMonth = $start->month;
+            $billingYear = $start->year;
 
             foreach ($validated['branches'] as $branchId) {
-                $amount = (float) ($validated['prices'][$branchId] ?? 0);
+                $branch = $branchModels->get($branchId);
+                $amount = (float) ($validated['prices'][$branchId]
+                    ?? ($branch?->subscription_price ?? 0));
 
                 $record = BranchBillingRecord::where('branch_id', $branchId)
                     ->whereDate('subscription_start_date', $startDate)
@@ -175,6 +182,57 @@ class BillingController extends Controller
         });
 
         return back()->with('success', "Billing generated. Created: {$created}. Updated unpaid: {$updated}. Skipped: {$skipped}.");
+    }
+
+    public function updateMaintenance(Request $request)
+    {
+        $validated = $request->validate([
+            'maintenance_mode' => ['nullable', 'boolean'],
+            'maintenance_message' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $settings = SystemSetting::current();
+        $enabled = (bool) ($validated['maintenance_mode'] ?? false);
+        $wasEnabled = $settings->isUnderMaintenance();
+
+        $settings->maintenance_mode = $enabled;
+        $settings->maintenance_message = $validated['maintenance_message'] ?? null;
+
+        if ($enabled && ! $wasEnabled) {
+            $settings->maintenance_started_at = now();
+        } elseif (! $enabled) {
+            $settings->maintenance_started_at = null;
+        }
+
+        $settings->save();
+
+        return back()->with('success', $enabled
+            ? 'Maintenance mode is ON. Only super admins can access the system now.'
+            : 'Maintenance mode is OFF. The system is open again.');
+    }
+
+    public function updatePrices(Request $request)
+    {
+        $validated = $request->validate([
+            'subscription_prices' => ['required', 'array'],
+            'subscription_prices.*' => ['nullable', 'numeric', 'min:0'],
+        ]);
+
+        $updated = 0;
+
+        foreach ($validated['subscription_prices'] as $branchId => $price) {
+            $branch = Branch::find($branchId);
+
+            if (! $branch) {
+                continue;
+            }
+
+            $branch->subscription_price = ($price === null || $price === '') ? null : (float) $price;
+            $branch->save();
+            $updated++;
+        }
+
+        return back()->with('success', "Subscription prices saved for {$updated} branch".($updated === 1 ? '' : 'es').". Future billing cycles will use these amounts automatically.");
     }
 
     public function updateStatus(Request $request, BranchBillingRecord $billingRecord)

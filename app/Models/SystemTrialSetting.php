@@ -64,11 +64,10 @@ class SystemTrialSetting extends Model
     {
         $date ??= now();
 
-        if (! $this->trial_start_date || ! $this->trial_end_date) {
-            return false;
-        }
-
-        return $date->toDateString() > $this->trial_end_date->toDateString();
+        // Billing is enforced whenever a free trial is not currently active —
+        // i.e. either no trial was configured, or the trial has ended. During
+        // an active trial the branches keep free access.
+        return ! $this->isActive($date);
     }
 
     public function computedStatus(?Carbon $date = null): string

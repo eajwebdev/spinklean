@@ -3,6 +3,7 @@
 use Illuminate\Foundation\Application;
 use App\Http\Middleware\EnsureBranchBillingAccess;
 use App\Http\Middleware\EnsureAttendanceEmployeeAuthenticated;
+use App\Http\Middleware\EnsureSystemNotUnderMaintenance;
 use App\Http\Middleware\EnsureSystemSettingsCompleted;
 use App\Http\Middleware\EnsureMenuAccess;
 use App\Http\Middleware\EnsureSuperAdmin;
@@ -19,9 +20,15 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'attendance.employee' => EnsureAttendanceEmployeeAuthenticated::class,
             'billing.access' => EnsureBranchBillingAccess::class,
+            'system.maintenance' => EnsureSystemNotUnderMaintenance::class,
             'settings.completed' => EnsureSystemSettingsCompleted::class,
             'menu.access' => EnsureMenuAccess::class,
             'super.admin' => EnsureSuperAdmin::class,
+        ]);
+
+        // PayMongo posts to the webhook without a CSRF token.
+        $middleware->validateCsrfTokens(except: [
+            'webhooks/paymongo',
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

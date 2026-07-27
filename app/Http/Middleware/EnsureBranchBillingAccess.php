@@ -2,16 +2,24 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Branch;
 use App\Models\BranchBillingRecord;
+use App\Models\SystemSetting;
 use App\Models\SystemTrialSetting;
+use App\Services\SubscriptionBillingService;
 use Closure;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\View;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsureBranchBillingAccess
 {
+    public function __construct(private SubscriptionBillingService $billing)
+    {
+    }
+
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
@@ -22,7 +30,11 @@ class EnsureBranchBillingAccess
             return $next($request);
         }
 
-        if ($request->routeIs('logout')) {
+        // Always let the user log out and reach the payment gateway routes, even
+        // when the branch is locked.
+        if ($request->routeIs('logout')
+            || $request->routeIs('admin.billing.pay')
+            || $request->routeIs('admin.billing.pay.*')) {
             return $next($request);
         }
 
@@ -67,95 +79,98 @@ class EnsureBranchBillingAccess
             return $next($request);
         }
 
-        $matchingRecords = BranchBillingRecord::query()
-            ->where('branch_id', $user->branch_id)
-            ->where(function ($query) use ($today) {
-                $query
-                    ->where(function ($query) use ($today) {
-                        $query
-                            ->whereDate('subscription_start_date', '<=', $today->toDateString())
-                            ->whereDate('subscription_end_date', '>=', $today->toDateString());
-                    })
-                    ->orWhere(function ($query) use ($today) {
-                        $query
-                            ->whereNull('subscription_start_date')
-                            ->whereNull('subscription_end_date')
-                            ->where('billing_month', (int) $today->month)
-                            ->where('billing_year', (int) $today->year);
-                    });
-            })
-            ->orderByRaw("CASE status WHEN 'paid' THEN 0 WHEN 'unpaid' THEN 1 WHEN 'overdue' THEN 2 WHEN 'suspended' THEN 3 ELSE 4 END")
-            ->latest('subscription_end_date')
-            ->latest('due_date');
+        $branch = Branch::find($user->branch_id);
 
-        $paidRecord = (clone $matchingRecords)->where('status', 'paid')->first();
+        if (! $branch) {
+            return $next($request);
+        }
+
+        // Make sure a first billing record exists once a price is configured.
+        $this->billing->ensureActiveRecord($branch);
+
+        $notifyDays = $this->billing->notifyDaysBefore();
+        $lockGraceDays = $this->billing->lockGraceDays();
+
+        // 1) Currently within a paid coverage window.
+        $paidRecord = $this->billing->activePaidRecord($branch, $today);
+
         if ($paidRecord) {
             $daysUntilEnd = $paidRecord->subscription_end_date
-                ? $today->copy()->startOfDay()->diffInDays($paidRecord->subscription_end_date->copy()->startOfDay(), false)
+                ? (int) $today->copy()->startOfDay()->diffInDays($paidRecord->subscription_end_date->copy()->startOfDay(), false)
                 : null;
 
-            if ($daysUntilEnd !== null && $daysUntilEnd >= 0 && $daysUntilEnd <= 5) {
+            // Prompt to renew (advance pay) as the coverage window nears its end.
+            if ($daysUntilEnd !== null && $daysUntilEnd >= 0 && $daysUntilEnd <= $notifyDays) {
+                $nextRecord = $this->billing->payableRecord($branch);
+
                 View::share('billingBanner', [
                     'type' => 'billing',
                     'dismissible' => true,
                     'autoOpen' => true,
-                    'key' => 'billing-upcoming-'.$paidRecord->id.'-'.$paidRecord->subscription_end_date->toDateString(),
-                    'message' => 'System billing is paid for '.$paidRecord->periodLabel().'. Next billing is coming up in '.$daysUntilEnd.' day'.($daysUntilEnd === 1 ? '' : 's').'.',
+                    'key' => 'billing-renew-'.($nextRecord?->id ?? $paidRecord->id).'-'.$paidRecord->subscription_end_date->toDateString(),
+                    'message' => 'Your subscription ends in '.$daysUntilEnd.' day'.($daysUntilEnd === 1 ? '' : 's').' ('.$paidRecord->subscription_end_date->format('M d, Y').'). Pay now to keep the system active.',
+                    'payRecordId' => $nextRecord?->isPayable() ? $nextRecord->id : null,
                 ]);
-
-                return $next($request);
             }
 
-            // Hide "Billing Paid" banner - only show overdue notices
             return $next($request);
         }
 
-        $record = $matchingRecords->first();
+        // 2) No active paid coverage — resolve the outstanding record.
+        $record = $branch->billingRecords()
+            ->whereIn('status', ['unpaid', 'overdue', 'suspended'])
+            ->orderBy('subscription_start_date')
+            ->orderBy('id')
+            ->first();
 
         if (! $record) {
             View::share('billingBanner', [
                 'type' => 'danger',
                 'dismissible' => false,
-                'key' => 'billing-missing-'.$user->branch_id.'-'.$today->year.'-'.$today->month,
-                'message' => 'No active branch subscription was found for '.$today->format('F Y').'. Please contact your administrator to continue using the system.',
+                'key' => 'billing-missing-'.$branch->id.'-'.$today->year.'-'.$today->month,
+                'message' => 'No active subscription was found for '.$today->format('F Y').'. Please contact your administrator to continue using the system.',
             ]);
 
             return $next($request);
         }
 
-        if ($record->status === 'paid') {
-            return $next($request);
-        }
-
-        if ($record->status === 'suspended') {
-            View::share('billingBanner', [
-                'type' => 'danger',
-                'dismissible' => false,
-                'key' => 'billing-'.$record->id.'-'.$record->status,
-                'message' => 'Branch subscription has been suspended. Please contact your administrator to continue using the system.',
-            ]);
-
-            return $next($request);
-        }
-
-        if ($record->status === 'unpaid' && $record->due_date->toDateString() < $today->toDateString()) {
+        // Flip unpaid -> overdue once the due date has passed.
+        if ($record->status === 'unpaid' && $record->due_date && $record->due_date->toDateString() < $today->toDateString()) {
             $record->update(['status' => 'overdue']);
             $record->status = 'overdue';
         }
 
+        // 3) Hard lock: overdue by at least the grace days, or suspended.
+        if ($record->isLocked($lockGraceDays, $today)) {
+            $settings = SystemSetting::current();
+
+            return response(view('billing.locked', [
+                'record' => $record,
+                'branch' => $branch,
+                'daysPastDue' => $record->daysPastDue($today),
+                'currency' => $settings->currency ?? 'PHP',
+                'message' => $record->status === 'suspended'
+                    ? 'Your branch subscription has been suspended. Settle the outstanding balance to continue.'
+                    : 'Your subscription is overdue. Please pay to continue using the system.',
+            ]));
+        }
+
+        // 4) Due / within grace — allow access but push the payment prompt.
+        $daysPastDue = $record->daysPastDue($today);
         $daysUntilDue = $record->due_date
-            ? $today->copy()->startOfDay()->diffInDays($record->due_date->copy()->startOfDay(), false)
+            ? (int) $today->copy()->startOfDay()->diffInDays($record->due_date->copy()->startOfDay(), false)
             : null;
-        $isDueSoon = $record->status === 'unpaid' && $daysUntilDue !== null && $daysUntilDue >= 0 && $daysUntilDue <= 5;
+        $isUpcoming = $daysUntilDue !== null && $daysUntilDue >= 0;
 
         View::share('billingBanner', [
-            'type' => $isDueSoon ? 'billing' : 'danger',
-            'dismissible' => true,
-            'autoOpen' => $isDueSoon,
-            'key' => 'billing-'.$record->id.'-'.$record->status,
-            'message' => $isDueSoon
-                ? 'Your branch subscription for '.$record->periodLabel().' is due in '.$daysUntilDue.' day'.($daysUntilDue === 1 ? '' : 's').'. Please prepare your system billing payment.'
-                : 'Your branch subscription for '.$record->periodLabel().' is '.str_replace('_', ' ', $record->status).'. Please contact your administrator.',
+            'type' => $isUpcoming ? 'billing' : 'danger',
+            'dismissible' => $isUpcoming,
+            'autoOpen' => true,
+            'key' => 'billing-due-'.$record->id.'-'.$today->toDateString(),
+            'message' => $isUpcoming
+                ? 'Your subscription for '.$record->periodLabel().' is due on '.$record->due_date->format('M d, Y').'. Pay now to avoid interruption.'
+                : 'Your subscription for '.$record->periodLabel().' is overdue by '.$daysPastDue.' day'.($daysPastDue === 1 ? '' : 's').'. Pay within '.max(0, $lockGraceDays - $daysPastDue).' day'.((max(0, $lockGraceDays - $daysPastDue)) === 1 ? '' : 's').' to avoid a lockout.',
+            'payRecordId' => $record->id,
         ]);
 
         return $next($request);
@@ -167,13 +182,15 @@ class EnsureBranchBillingAccess
             return [];
         }
 
+        $notifyDays = $this->billing->notifyDaysBefore();
+
         $query = BranchBillingRecord::query()
             ->with('branch:id,name')
             ->when(! $user->canManageAllBranches(), fn ($query) => $query->where('branch_id', $user->branch_id));
 
         $upcoming = (clone $query)
             ->whereIn('status', ['unpaid', 'overdue', 'suspended'])
-            ->whereDate('due_date', '<=', $today->copy()->addDays(5)->toDateString())
+            ->whereDate('due_date', '<=', $today->copy()->addDays($notifyDays)->toDateString())
             ->orderBy('due_date')
             ->limit(5)
             ->get()
@@ -186,30 +203,21 @@ class EnsureBranchBillingAccess
 
         $paid = (clone $query)
             ->where('status', 'paid')
-            ->where(function ($query) use ($today) {
-                $query
-                    ->where(function ($query) use ($today) {
-                        $query
-                            ->whereDate('subscription_start_date', '<=', $today->toDateString())
-                            ->whereDate('subscription_end_date', '>=', $today->toDateString());
-                    })
-                    ->orWhereDate('payment_date', '>=', $today->copy()->subDays(5)->toDateString());
-            })
-            ->latest('payment_date')
+            ->whereDate('subscription_start_date', '<=', $today->toDateString())
+            ->whereDate('subscription_end_date', '>=', $today->toDateString())
             ->latest('subscription_end_date')
             ->limit(5)
             ->get()
-            ->map(function (BranchBillingRecord $record) use ($today) {
+            ->map(function (BranchBillingRecord $record) use ($today, $notifyDays) {
                 $daysUntilEnd = $record->subscription_end_date
-                    ? $today->copy()->startOfDay()->diffInDays($record->subscription_end_date->copy()->startOfDay(), false)
+                    ? (int) $today->copy()->startOfDay()->diffInDays($record->subscription_end_date->copy()->startOfDay(), false)
                     : null;
 
-                // Only show if billing is coming up (within 5 days), hide already paid notices
-                if ($daysUntilEnd !== null && $daysUntilEnd >= 0 && $daysUntilEnd <= 5) {
+                if ($daysUntilEnd !== null && $daysUntilEnd >= 0 && $daysUntilEnd <= $notifyDays) {
                     return [
                         'type' => 'billing',
-                        'title' => ($record->branch?->name ? $record->branch->name.' - ' : '').'Billing paid',
-                        'message' => 'Paid for '.$record->periodLabel().'. Next billing is coming up in '.$daysUntilEnd.' day'.($daysUntilEnd === 1 ? '' : 's').'.',
+                        'title' => ($record->branch?->name ? $record->branch->name.' - ' : '').'Renewal coming up',
+                        'message' => 'Paid through '.$record->subscription_end_date->format('M d, Y').'. Renews in '.$daysUntilEnd.' day'.($daysUntilEnd === 1 ? '' : 's').'.',
                         'key' => 'billing-paid-'.$record->id,
                     ];
                 }

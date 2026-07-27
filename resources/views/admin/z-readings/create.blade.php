@@ -263,6 +263,13 @@
             </div>
         </div>
 
+        <!-- Remarks -->
+        <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <label for="z-remarks" class="text-base font-semibold">Remarks</label>
+            <p class="text-xs text-muted">Optional notes for this Z Reading (e.g. over/short explanation, incidents). Saved with the record and shown on the PDF.</p>
+            <textarea id="z-remarks" name="remarks" rows="3" maxlength="1000" placeholder="Add any remarks before saving…" class="mt-2 w-full rounded-md border border-border bg-white px-3 py-2 text-sm dark:border-gray-800 dark:bg-gray-950">{{ old('remarks', $reading?->remarks) }}</textarea>
+        </div>
+
         <!-- Save Button -->
         <div class="flex justify-end">
             <button type="submit" class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-6 text-sm font-medium text-white hover:opacity-90">

@@ -35,6 +35,9 @@ class SystemSetting extends Model
         'primary_color',
         'dark_mode_default',
         'is_completed',
+        'maintenance_mode',
+        'maintenance_message',
+        'maintenance_started_at',
     ];
 
     protected $casts = [
@@ -47,6 +50,8 @@ class SystemSetting extends Model
         'sms_enabled' => 'boolean',
         'dark_mode_default' => 'boolean',
         'is_completed' => 'boolean',
+        'maintenance_mode' => 'boolean',
+        'maintenance_started_at' => 'datetime',
     ];
 
     public static function current(): self
@@ -78,6 +83,11 @@ class SystemSetting extends Model
             'sms_template_ready_for_delivery' => "Dear {name}, your laundry order #{order_no} is now READY AND OUT FOR DELIVERY. Remaining balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}!",
             'sms_template_completed' => "Dear {name}, your laundry order #{order_no} has been COMPLETED. Total: {price}, Balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}! We appreciate your business.",
         ];
+    }
+
+    public function isUnderMaintenance(): bool
+    {
+        return (bool) ($this->maintenance_mode ?? false);
     }
 
     public function isComplete(): bool

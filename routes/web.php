@@ -20,6 +20,7 @@ use App\Http\Controllers\Admin\PoTransactionController;
 use App\Http\Controllers\Admin\ReceivableController;
 use App\Http\Controllers\Admin\ReportController;
 use App\Http\Controllers\Admin\SmsLogController;
+use App\Http\Controllers\Admin\SubscriptionBillingController;
 use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\ZReadingController;
@@ -34,6 +35,10 @@ Route::get('/pay', function () {
 Route::get('/uploads/{path}', [PublicUploadController::class, 'show'])
     ->where('path', '.*')
     ->name('uploads.show');
+
+// PayMongo webhook — public, CSRF-exempt (see bootstrap/app.php).
+Route::post('/webhooks/paymongo', [SubscriptionBillingController::class, 'webhook'])
+    ->name('webhooks.paymongo');
 
 Route::middleware('guest')->group(function () {
     Route::get('/login', [LoginController::class, 'showLogin'])->name('login');
@@ -60,7 +65,7 @@ Route::middleware('attendance.employee')->group(function () {
     Route::post('/time-clock/daily-tasks/{task}/complete', [AttendanceController::class, 'publicCompleteDailyTask'])->name('attendance.daily-tasks.complete');
 });
 
-Route::middleware(['auth', 'settings.completed', 'billing.access'])->group(function () {
+Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.access'])->group(function () {
     Route::get('/', [DashboardController::class, 'index'])->name('dashboard');
     Route::get('/dashboard/data', [DashboardController::class, 'data'])->name('dashboard.data');
     Route::get('/dashboard/assistant/options', [DashboardController::class, 'assistantOptions'])->name('dashboard.assistant.options');
@@ -73,7 +78,17 @@ Route::middleware(['auth', 'settings.completed', 'billing.access'])->group(funct
             Route::post('/billing/generate', [BillingController::class, 'generate'])->name('billing.generate');
             Route::patch('/billing/records/{billingRecord}/status', [BillingController::class, 'updateStatus'])->name('billing.records.status');
             Route::patch('/billing/records/{billingRecord}/paid', [BillingController::class, 'markPaid'])->name('billing.records.mark-paid');
+            Route::put('/billing/prices', [BillingController::class, 'updatePrices'])->name('billing.prices.update');
+            Route::put('/billing/maintenance', [BillingController::class, 'updateMaintenance'])->name('billing.maintenance.update');
         });
+
+        // Subscription payment gateway — reachable by branch users so they can
+        // pay even while the system is locked for overdue billing.
+        Route::post('/billing/pay/{record?}', [SubscriptionBillingController::class, 'pay'])->name('billing.pay');
+        Route::post('/billing/pay-qr/{record?}', [SubscriptionBillingController::class, 'payQr'])->name('billing.pay.qr');
+        Route::get('/billing/pay/{record}/status', [SubscriptionBillingController::class, 'payStatus'])->name('billing.pay.status');
+        Route::get('/billing/pay/{record}/return', [SubscriptionBillingController::class, 'returnFromGateway'])->name('billing.pay.return');
+        Route::get('/billing/pay/{record}/cancel', [SubscriptionBillingController::class, 'cancel'])->name('billing.pay.cancel');
 
         Route::middleware('menu.access:branches')->group(function () {
             Route::resource('branches', BranchController::class)->only(['index', 'store', 'update', 'destroy']);
@@ -158,6 +173,12 @@ Route::middleware(['auth', 'settings.completed', 'billing.access'])->group(funct
         Route::get('/reports/pdf', [ReportController::class, 'pdf'])
             ->middleware('menu.access:reports')
             ->name('reports.pdf');
+        Route::get('/reports/customer-orders', [ReportController::class, 'customerOrders'])
+            ->middleware('menu.access:reports')
+            ->name('reports.customer-orders');
+        Route::get('/reports/customer-orders/pdf', [ReportController::class, 'customerOrdersPdf'])
+            ->middleware('menu.access:reports')
+            ->name('reports.customer-orders.pdf');
         Route::get('/reports/z-reading/pdf', [ReportController::class, 'zReadingPdf'])
             ->middleware('menu.access:reports')
             ->name('reports.z-reading.pdf');

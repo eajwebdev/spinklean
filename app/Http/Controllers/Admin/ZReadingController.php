@@ -141,6 +141,7 @@ class ZReadingController extends Controller
             'machine_counters.*.wash.ending' => ['nullable', 'integer', 'min:0', 'max:999999999'],
             'machine_counters.*.dry.beginning' => ['nullable', 'integer', 'min:0', 'max:999999999'],
             'machine_counters.*.dry.ending' => ['nullable', 'integer', 'min:0', 'max:999999999'],
+            'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
         $branchId = $canChooseBranch ? (int) $validated['branch_id'] : (int) $user->branch_id;
@@ -163,8 +164,9 @@ class ZReadingController extends Controller
         );
         $actualTotal = round($actualCash + $actualGcash + $actualBank, 2);
         $overShort = round($actualTotal - (float) $summary['expected_total_amount'], 2);
+        $remarks = $validated['remarks'] ?? null;
 
-        $reading = DB::transaction(function () use ($branchId, $businessDate, $cashCount, $machineCounters, $actualCash, $actualGcash, $actualBank, $actualTotal, $overShort, $summary, $user): ZReading {
+        $reading = DB::transaction(function () use ($branchId, $businessDate, $cashCount, $machineCounters, $actualCash, $actualGcash, $actualBank, $actualTotal, $overShort, $summary, $remarks, $user): ZReading {
             $reading = ZReading::query()
                 ->where('branch_id', $branchId)
                 ->whereDate('business_date', $businessDate)
@@ -200,7 +202,7 @@ class ZReadingController extends Controller
                 'first_job_order_number' => $summary['first_job_order_number'],
                 'last_job_order_number' => $summary['last_job_order_number'],
                 'signature_name' => $user->name,
-                'remarks' => null,
+                'remarks' => $remarks,
                 'closed_at' => now(),
             ]);
             $reading->save();

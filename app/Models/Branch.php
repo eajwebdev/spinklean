@@ -19,6 +19,7 @@ class Branch extends Model
         'longitude',
         'attendance_radius_meters',
         'machine_count',
+        'subscription_price',
         'is_active',
     ];
 
@@ -27,6 +28,7 @@ class Branch extends Model
         'longitude' => 'decimal:7',
         'attendance_radius_meters' => 'integer',
         'machine_count' => 'integer',
+        'subscription_price' => 'decimal:2',
         'is_active' => 'boolean',
     ];
 

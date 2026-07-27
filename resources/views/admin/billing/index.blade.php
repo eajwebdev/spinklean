@@ -42,6 +42,46 @@
         </div>
     </div>
 
+    <section class="rounded-lg border p-4 shadow-sm {{ $settings->isUnderMaintenance() ? 'border-amber-300 bg-amber-50 dark:border-amber-900/70 dark:bg-amber-950/30' : 'border-border bg-white dark:border-gray-800 dark:bg-gray-900' }}">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div class="flex items-start gap-3">
+                <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md {{ $settings->isUnderMaintenance() ? 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-200' : 'bg-smoke text-muted dark:bg-gray-800' }}">
+                    <span data-lucide="wrench" class="h-4 w-4"></span>
+                </div>
+                <div>
+                    <h2 class="text-base font-semibold">System Maintenance</h2>
+                    <p class="text-sm text-muted">Turn this on to lock the whole system. Only super admins can log in while it is active.</p>
+                    @if($settings->isUnderMaintenance())
+                        <p class="mt-1 text-xs font-medium text-amber-700 dark:text-amber-300">
+                            <span data-lucide="alert-triangle" class="inline h-3.5 w-3.5"></span>
+                            Maintenance is ON{{ $settings->maintenance_started_at ? ' since '.$settings->maintenance_started_at->format('M d, Y g:i A') : '' }}.
+                        </p>
+                    @endif
+                </div>
+            </div>
+            <span class="{{ \App\Support\StatusBadge::classes($settings->isUnderMaintenance() ? 'suspended' : 'paid') }} shrink-0">
+                {{ $settings->isUnderMaintenance() ? 'Maintenance: ON' : 'System: Live' }}
+            </span>
+        </div>
+
+        <form method="POST" action="{{ route('admin.billing.maintenance.update') }}" class="mt-4 space-y-3">
+            @csrf
+            @method('PUT')
+            <label class="flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" name="maintenance_mode" value="1" @checked(old('maintenance_mode', $settings->maintenance_mode)) class="rounded border-border text-primary">
+                Enable maintenance mode (lock the system for everyone except super admins)
+            </label>
+            <div>
+                <label class="mb-1.5 block text-sm font-medium">Message shown to users <span class="text-muted">(optional)</span></label>
+                <textarea name="maintenance_message" rows="2" maxlength="500" placeholder="The system is temporarily unavailable while we perform scheduled maintenance. Please check back shortly." class="w-full rounded-md border border-border bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-950">{{ old('maintenance_message', $settings->maintenance_message) }}</textarea>
+            </div>
+            <button type="submit" class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">
+                Save Maintenance Settings
+            </button>
+            <p class="text-xs text-muted">Tick the box and save to lock the system; untick and save to reopen it.</p>
+        </form>
+    </section>
+
     <div class="grid gap-4 xl:grid-cols-2">
         <section class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
             <h2 class="mb-3 text-base font-semibold">Global Trial Settings</h2>
@@ -75,7 +115,8 @@
         </section>
 
         <section class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-            <h2 class="mb-3 text-base font-semibold">Generate Branch Billing</h2>
+            <h2 class="mb-1 text-base font-semibold">Generate First Billing Cycle</h2>
+            <p class="mb-3 text-xs text-muted">After the first cycle, the next due date and record auto-generate whenever a branch pays via PayMongo. End date and due date are optional — leave them blank to auto-derive a 1-month cycle due on the start date.</p>
             <form method="POST" action="{{ route('admin.billing.generate') }}" class="space-y-3" x-data="{ selected: [] }">
                 @csrf
                 <div class="grid gap-3 sm:grid-cols-3">
@@ -84,12 +125,12 @@
                         <input type="date" name="subscription_start_date" value="{{ old('subscription_start_date', now()->startOfMonth()->toDateString()) }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" required>
                     </div>
                     <div>
-                        <label class="mb-1.5 block text-sm font-medium">Subscription End</label>
-                        <input type="date" name="subscription_end_date" value="{{ old('subscription_end_date', now()->endOfMonth()->toDateString()) }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" required>
+                        <label class="mb-1.5 block text-sm font-medium">Subscription End <span class="text-muted">(auto)</span></label>
+                        <input type="date" name="subscription_end_date" value="{{ old('subscription_end_date') }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="Auto (+1 month)">
                     </div>
                     <div>
-                        <label class="mb-1.5 block text-sm font-medium">Due Date</label>
-                        <input type="date" name="due_date" value="{{ old('due_date', now()->addDays(5)->toDateString()) }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" required>
+                        <label class="mb-1.5 block text-sm font-medium">Due Date <span class="text-muted">(auto)</span></label>
+                        <input type="date" name="due_date" value="{{ old('due_date') }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="Auto (= start date)">
                     </div>
                 </div>
 
@@ -109,7 +150,7 @@
                                     <input type="checkbox" name="branches[]" value="{{ $branch->id }}" x-model="selected" class="rounded border-border text-primary">
                                     <span class="font-medium">{{ $branch->name }}</span>
                                 </div>
-                                <input type="number" step="0.01" min="0" name="prices[{{ $branch->id }}]" value="{{ old('prices.'.$branch->id, 0) }}" class="mt-2 h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="Monthly price">
+                                <input type="number" step="0.01" min="0" name="prices[{{ $branch->id }}]" value="{{ old('prices.'.$branch->id, $branch->subscription_price ?? 0) }}" class="mt-2 h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="Monthly price">
                             </label>
                         @endforeach
                     </div>
@@ -119,6 +160,29 @@
             </form>
         </section>
     </div>
+
+    <section class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+        <h2 class="mb-1 text-base font-semibold">Monthly Subscription Prices</h2>
+        <p class="mb-3 text-xs text-muted">Set each branch's fixed monthly price once. Auto-generated billing cycles and PayMongo charges use this amount — no need to re-enter it every period.</p>
+        <form method="POST" action="{{ route('admin.billing.prices.update') }}">
+            @csrf
+            @method('PUT')
+            <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                @foreach($branches as $branch)
+                    <div class="flex items-center gap-2 rounded-md border border-border p-2 dark:border-gray-700">
+                        <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ $branch->name }}</span>
+                        <div class="flex items-center gap-1">
+                            <span class="text-xs text-muted">{{ $currency }}</span>
+                            <input type="number" step="0.01" min="0" name="subscription_prices[{{ $branch->id }}]" value="{{ old('subscription_prices.'.$branch->id, $branch->subscription_price !== null ? number_format((float) $branch->subscription_price, 2, '.', '') : '') }}" class="h-9 w-28 rounded-md border border-border bg-white px-2 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="0.00">
+                        </div>
+                    </div>
+                @endforeach
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">Save Prices</button>
+            </div>
+        </form>
+    </section>
 
     <section class="rounded-lg border border-border bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
         <div class="border-b border-border p-4 dark:border-gray-800">

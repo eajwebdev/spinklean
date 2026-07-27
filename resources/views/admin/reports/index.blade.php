@@ -49,6 +49,10 @@
                 <span data-lucide="receipt" class="h-4 w-4"></span>
                 Daily-Style Z Reading PDF
             </a>
+            <a href="{{ route('admin.reports.customer-orders') }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900">
+                <span data-lucide="users" class="h-4 w-4"></span>
+                Customer Job Orders
+            </a>
         </div>
     </div>
 

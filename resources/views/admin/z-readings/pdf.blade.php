@@ -279,6 +279,16 @@
     </tr>
 </table>
 
+@if(filled($reading->remarks))
+    <table style="margin-top:14px;">
+        <tr>
+            <td class="no-border" style="padding:0;">
+                <strong>Remarks:</strong> {{ $reading->remarks }}
+            </td>
+        </tr>
+    </table>
+@endif
+
 <table style="margin-top:28px;">
     <tr>
         <td class="no-border" style="width:33%; padding:0 18px;"><div class="signature">{{ $reading->signature_name }}<br><span class="muted">Prepared by</span></div></td>

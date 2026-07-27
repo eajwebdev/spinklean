@@ -63,6 +63,88 @@ class ReportController extends Controller
         return $pdf->stream('z-reading-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf');
     }
 
+    public function customerOrders(Request $request)
+    {
+        return view('admin.reports.customer-orders', $this->customerOrdersData($request));
+    }
+
+    public function customerOrdersPdf(Request $request)
+    {
+        $data = $this->customerOrdersData($request);
+
+        abort_unless($data['customer'], 404, 'Select a customer first.');
+
+        $pdf = Pdf::loadView('admin.reports.customer-orders-pdf', [
+            ...$data,
+            'generatedAt' => now(),
+        ])->setPaper('a4', 'portrait');
+
+        return $pdf->stream('job-orders-'.str($data['customer']->name)->slug().'-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf');
+    }
+
+    private function customerOrdersData(Request $request): array
+    {
+        $user = $request->user();
+        $canChooseBranch = $user->isAdmin();
+        $dateFrom = $this->parseDate($request->input('date_from'), today()->startOfMonth()->toDateString());
+        $dateTo = $this->parseDate($request->input('date_to'), today()->toDateString());
+        $branchId = $canChooseBranch ? ($request->integer('branch_id') ?: null) : $user->branch_id;
+
+        $branches = Branch::query()
+            ->where('is_active', true)
+            ->when(! $canChooseBranch, fn ($query) => $query->whereKey($user->branch_id))
+            ->orderBy('name')
+            ->get();
+
+        $customers = Customer::query()
+            ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->orderBy('name')
+            ->get(['id', 'name', 'phone']);
+
+        $customerId = $request->integer('customer_id') ?: null;
+        $customer = $customerId
+            ? Customer::query()
+                ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+                ->find($customerId)
+            : null;
+
+        $orders = collect();
+
+        if ($customer) {
+            $orders = JobOrder::query()
+                ->with(['branch:id,name', 'items:id,job_order_id,description,laundry_service_id,quantity,unit_price,total', 'items.service:id,name'])
+                ->where('customer_id', $customer->id)
+                ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+                ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+                ->whereDate('created_at', '>=', $dateFrom)
+                ->whereDate('created_at', '<=', $dateTo)
+                ->orderBy('created_at')
+                ->orderBy('id')
+                ->get();
+        }
+
+        $summary = [
+            'orders' => $orders->count(),
+            'total' => round((float) $orders->sum('total'), 2),
+            'paid' => round((float) $orders->sum('paid_amount'), 2),
+            'balance' => round((float) $orders->sum('balance'), 2),
+        ];
+
+        return [
+            'branches' => $branches,
+            'canChooseBranch' => $canChooseBranch,
+            'customers' => $customers,
+            'customer' => $customer,
+            'orders' => $orders,
+            'summary' => $summary,
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+            'selectedBranchId' => $branchId,
+            'settings' => SystemSetting::current(),
+        ];
+    }
+
     private function consolidatedZReadingData(Request $request): array
     {
         $user = $request->user();

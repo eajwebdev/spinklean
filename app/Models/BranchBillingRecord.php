@@ -19,6 +19,9 @@ class BranchBillingRecord extends Model
         'payment_date',
         'payment_method',
         'reference_no',
+        'paymongo_checkout_id',
+        'paymongo_checkout_url',
+        'paymongo_payment_id',
         'remarks',
         'paid_by',
         'generated_by',
@@ -74,5 +77,42 @@ class BranchBillingRecord extends Model
         $date ??= now();
 
         return $date->startOfDay()->lessThanOrEqualTo($this->graceEndsAt($graceDays)->startOfDay());
+    }
+
+    public function isPayable(): bool
+    {
+        return in_array($this->status, ['unpaid', 'overdue', 'suspended'], true);
+    }
+
+    /**
+     * Whole days the record is past its due date (0 when not yet due).
+     */
+    public function daysPastDue(?Carbon $date = null): int
+    {
+        $date ??= now();
+
+        if (! $this->due_date) {
+            return 0;
+        }
+
+        $diff = (int) $this->due_date->copy()->startOfDay()->diffInDays($date->copy()->startOfDay(), false);
+
+        return max(0, $diff);
+    }
+
+    /**
+     * The branch is hard-locked once it is overdue by at least the grace days.
+     */
+    public function isLocked(int $lockGraceDays, ?Carbon $date = null): bool
+    {
+        if ($this->status === 'paid') {
+            return false;
+        }
+
+        if ($this->status === 'suspended') {
+            return true;
+        }
+
+        return $this->daysPastDue($date) >= $lockGraceDays;
     }
 }

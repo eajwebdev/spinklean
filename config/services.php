@@ -41,4 +41,12 @@ return [
         'sender_id' => env('UNISMS_SENDER_ID', 'UnisoftDEV'),
     ],
 
+    'paymongo' => [
+        // From your PayMongo dashboard (Developers > API Keys).
+        'secret' => env('PAYMONGO_SECRET_KEY'),
+        'public' => env('PAYMONGO_PUBLIC_KEY'),
+        // Signing secret for the /webhooks/paymongo endpoint (Developers > Webhooks).
+        'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
+    ],
+
 ];
