@@ -28,6 +28,7 @@ class Menu
             'branches' => ['label' => 'Branches', 'route' => 'admin.branches.index', 'icon' => 'branches'],
             'users' => ['label' => 'Users', 'route' => 'admin.users.index', 'icon' => 'users'],
             'billing' => ['label' => 'Billing', 'route' => 'admin.billing.index', 'icon' => 'receipt', 'super_admin' => true],
+            'compose_sms' => ['label' => 'Compose SMS', 'route' => 'admin.sms.compose', 'icon' => 'smsLogs'],
             'sms_logs' => ['label' => 'SMS Logs', 'route' => 'admin.sms-logs.index', 'icon' => 'smsLogs'],
             'settings' => ['label' => 'System Settings', 'route' => 'admin.settings.edit', 'icon' => 'settings'],
         ];

@@ -19,6 +19,7 @@ use App\Http\Controllers\Admin\PettyCashController;
 use App\Http\Controllers\Admin\PoTransactionController;
 use App\Http\Controllers\Admin\ReceivableController;
 use App\Http\Controllers\Admin\ReportController;
+use App\Http\Controllers\Admin\SmsController;
 use App\Http\Controllers\Admin\SmsLogController;
 use App\Http\Controllers\Admin\SubscriptionBillingController;
 use App\Http\Controllers\Admin\SystemSettingController;
@@ -225,6 +226,11 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::delete('/petty-cash/{moneyMovement}', [PettyCashController::class, 'destroy'])->name('petty-cash.destroy');
         });
 
+        Route::middleware('menu.access:compose_sms')->group(function () {
+            Route::get('/compose-sms', [SmsController::class, 'compose'])->name('sms.compose');
+            Route::post('/compose-sms', [SmsController::class, 'send'])->name('sms.send');
+        });
+
         Route::get('/sms-logs', [SmsLogController::class, 'index'])
             ->middleware('menu.access:sms_logs')
             ->name('sms-logs.index');
@@ -236,9 +242,5 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         Route::put('/settings', [SystemSettingController::class, 'update'])
             ->middleware('menu.access:settings')
             ->name('settings.update');
-
-        Route::post('/settings/sms-test', [SystemSettingController::class, 'sendTestSms'])
-            ->middleware('menu.access:settings')
-            ->name('settings.sms-test');
     });
 });

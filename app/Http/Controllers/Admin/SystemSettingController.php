@@ -241,28 +241,4 @@ class SystemSettingController extends Controller
             ->with('success', 'System settings saved successfully.');
     }
 
-    public function sendTestSms(Request $request)
-    {
-        abort_unless($request->user()->isAdmin(), 403);
-
-        $validated = $request->validate([
-            'test_phone' => ['required', 'string', 'max:20'],
-            'test_message' => ['required', 'string', 'max:670'],
-        ]);
-
-        $log = SmsNotifier::sendTest($validated['test_phone'], $validated['test_message']);
-        $ok = $log->status === 'sent';
-
-        Activity::log($request, 'sms_test_sent', null, [
-            'recipient' => $log->recipient,
-            'status' => $log->status,
-        ]);
-
-        return response()->json([
-            'ok' => $ok,
-            'message' => $ok
-                ? 'Test SMS sent successfully to '.$log->recipient.'.'
-                : ($log->response ?: 'The SMS provider did not accept the message.'),
-        ], $ok ? 200 : 422);
-    }
 }

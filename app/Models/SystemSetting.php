@@ -77,11 +77,11 @@ class SystemSetting extends Model
     public static function defaultSmsTemplates(): array
     {
         return [
-            'sms_template_order_received' => "Dear {name}, thank you for choosing {store}. We have received your laundry order #{order_no} at {branch} for a total of {price}. You may pay online via https://spinklean.online/pay. We will notify you once your order is ready.",
-            'sms_template_delivery_received' => "Dear {name}, thank you for choosing {store}. We have picked up your laundry order #{order_no} ({branch}) for a total of {price}. You may pay online via https://spinklean.online/pay. We will notify you once it is ready for delivery.",
-            'sms_template_ready_for_pickup' => "Dear {name}, your laundry order #{order_no} is now READY FOR PICKUP at {branch}. Remaining balance: {balance}. You may pay online via https://spinklean.online/pay. Please present your order number upon pickup. Thank you!",
-            'sms_template_ready_for_delivery' => "Dear {name}, your laundry order #{order_no} is now READY AND OUT FOR DELIVERY. Remaining balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}!",
-            'sms_template_completed' => "Dear {name}, your laundry order #{order_no} has been COMPLETED. Total: {price}, Balance: {balance}. You may pay online via https://spinklean.online/pay. Thank you for choosing {store}! We appreciate your business.",
+            'sms_template_order_received' => "Hi {name}. We've received your laundry at Spin Klean {branch}. Order #: {order_no}. Please keep this order number. Present it when claiming your laundry. If you requested delivery, please wait for our confirmation SMS once your order is ready.\n\nFor inquiries or booking:\nFacebook: Spin Klean Laundry CDO\n{branch_number}\n\nThis is an automated message. Please do not reply.",
+            'sms_template_delivery_received' => "Hi {name}. We've picked up your laundry for Spin Klean {branch}. Order #: {order_no}. Please keep this order number. We'll send a confirmation SMS once your order is ready for delivery.\n\nFor inquiries or booking:\nFacebook: Spin Klean Laundry CDO\n{branch_number}\n\nThis is an automated message. Please do not reply.",
+            'sms_template_ready_for_pickup' => "Hi {name}! 👋 Your laundry is READY. Order #: {order_no}\nTotal: {total}\n\nFor Pick-up: present your order number during pick up.\n\nFor Delivery: Please reply with your preferred delivery time. Payment must be made before delivery via GCash payment link or exact cash.\n{pay_link}\n\n{branch_number}\n\nThis is an automated message. Please do not reply.",
+            'sms_template_ready_for_delivery' => "Hi {name}! 👋 Your laundry is READY for delivery. Order #: {order_no}\nTotal: {total}\n\nPlease reply with your preferred delivery time. Payment must be made before delivery via GCash payment link or exact cash.\n{pay_link}\n\n{branch_number}\n\nThis is an automated message. Please do not reply.",
+            'sms_template_completed' => "Hi {name}. Your laundry order #: {order_no} is COMPLETED.\nTotal: {total} | Balance: {balance}\n\nThank you for choosing Spin Klean {branch}!\nFacebook: Spin Klean Laundry CDO\n{branch_number}\n\nThis is an automated message. Please do not reply.",
         ];
     }
 

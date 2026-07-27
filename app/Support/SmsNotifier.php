@@ -65,13 +65,17 @@ class SmsNotifier
      * resulting status ('sent' on success, 'failed'/'queued' otherwise) and
      * the human-readable provider response.
      */
-    public static function sendTest(string $phone, string $message): SmsLog
+    /**
+     * Send a real, manually composed SMS to a recipient (e.g. from the
+     * Compose SMS page). Records the customer/branch when known.
+     */
+    public static function sendManual(string $phone, string $message, ?int $customerId = null, ?int $branchId = null): SmsLog
     {
-        $settings = self::resolveSettings();
+        $settings = self::resolveSettings($branchId);
 
         $log = SmsLog::create([
-            'branch_id' => null,
-            'customer_id' => null,
+            'branch_id' => $branchId,
+            'customer_id' => $customerId,
             'recipient' => trim($phone),
             'message' => trim($message),
             'status' => 'queued',
@@ -308,6 +312,8 @@ class SmsNotifier
         $total = $currency.' '.number_format((float) $order->total, 2);
         $balance = $currency.' '.number_format((float) $order->balance, 2);
         $price = $currency.' '.number_format((float) $order->total, 2);
+        $branchNumber = (string) ($order->branch?->contact_number ?: $settings->contact_number ?? '');
+        $payLink = rtrim((string) (config('app.url') ?: 'https://spinklean.online'), '/').'/pay';
 
         return [
             // Canonical placeholders
@@ -327,6 +333,11 @@ class SmsNotifier
             '{order_number}' => $orderNumber,
             '{branch}' => $branchName,
             '{store}' => (string) $storeName,
+            // Branch contact number and online payment link
+            '{branch_number}' => $branchNumber,
+            '{branch_contact}' => $branchNumber,
+            '{pay_link}' => $payLink,
+            '{gcash_link}' => $payLink,
         ];
     }
 }

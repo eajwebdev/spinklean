@@ -317,47 +317,8 @@
                         <textarea name="sms_template_completed" rows="3" class="w-full rounded-md border border-border dark:border-gray-700 bg-white dark:bg-gray-950 px-3 py-2 text-sm">{{ $v }}</textarea>
                     </div>
 
-                    {{-- SMS Tester --}}
-                    <div class="lg:col-span-2 overflow-hidden rounded-lg border border-border bg-smoke dark:border-gray-700 dark:bg-gray-950"
-                        x-data="smsTester(@js(route('admin.settings.sms-test')))">
-                        <div class="flex items-start gap-3 border-b border-border px-4 py-3 dark:border-gray-800">
-                            <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
-                                <span data-lucide="zap" class="h-4 w-4"></span>
-                            </div>
-                            <div class="min-w-0">
-                                <p class="text-sm font-semibold">Send Test SMS</p>
-                                <p class="mt-0.5 text-xs text-muted">Sends a real message through the saved provider settings above. If you just changed the API key or sender ID, save first.</p>
-                            </div>
-                        </div>
-
-                        <div class="grid grid-cols-1 gap-4 p-4 sm:grid-cols-3">
-                            <div class="sm:col-span-1">
-                                <label class="mb-1.5 block text-xs font-medium text-muted">Recipient Number</label>
-                                <div class="relative">
-                                    <span data-lucide="user" class="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"></span>
-                                    <input type="text" x-model="phone" placeholder="09171234567" maxlength="20"
-                                        @keydown.enter.prevent="send()"
-                                        class="h-9 w-full rounded-md border border-border bg-white pl-9 pr-3 text-sm dark:border-gray-700 dark:bg-gray-900">
-                                </div>
-                            </div>
-                            <div class="sm:col-span-2">
-                                <div class="mb-1.5 flex items-center justify-between">
-                                    <label class="block text-xs font-medium text-muted">Message</label>
-                                </div>
-                                <textarea x-model="message" rows="3" placeholder="Type a test message…"
-                                    class="w-full rounded-md border border-border bg-white px-3 py-2 text-sm dark:border-gray-700 dark:bg-gray-900"></textarea>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center justify-between gap-3 border-t border-border px-4 py-3 dark:border-gray-800">
-                            <p class="text-[11px] text-muted">A copy is saved to SMS logs.</p>
-                            <button type="button" @click="send()" :disabled="sending"
-                                class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white shadow-sm transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60">
-                                <span data-lucide="zap" class="h-4 w-4" x-show="!sending"></span>
-                                <span x-show="sending" class="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white"></span>
-                                <span x-text="sending ? 'Sending…' : 'Send Test SMS'"></span>
-                            </button>
-                        </div>
+                    <div class="lg:col-span-2 rounded-lg border border-border bg-smoke px-4 py-3 text-xs text-muted dark:border-gray-700 dark:bg-gray-950">
+                        Need to message a customer? Use <a href="{{ route('admin.sms.compose') }}" class="font-medium text-primary hover:underline">Compose SMS</a> in the sidebar.
                     </div>
                 </div>
                 @endif
@@ -388,52 +349,4 @@
         </div>
     </form>
 </div>
-
-<script>
-    // Registered before Alpine.start() (module scripts are deferred), so the
-    // inline x-data="smsTester(...)" resolves this global on initialization.
-    window.smsTester = (endpoint) => ({
-        endpoint,
-        phone: '',
-        message: '',
-        sending: false,
-
-        async send() {
-            if (this.sending) return;
-
-            if (!this.phone.trim() || !this.message.trim()) {
-                this.notify(false, 'Enter a phone number and a message first.');
-                return;
-            }
-
-            this.sending = true;
-
-            try {
-                const response = await fetch(this.endpoint, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Accept': 'application/json',
-                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.content
-                            || '{{ csrf_token() }}',
-                    },
-                    body: JSON.stringify({ test_phone: this.phone, test_message: this.message }),
-                });
-
-                const data = await response.json().catch(() => ({}));
-                const ok = response.ok && data.ok === true;
-
-                this.notify(ok, data.message || (ok ? 'Test SMS sent.' : 'Failed to send test SMS.'));
-            } catch (error) {
-                this.notify(false, 'Network error while sending the test SMS.');
-            } finally {
-                this.sending = false;
-            }
-        },
-
-        notify(ok, text) {
-            window.toast.fire({ icon: ok ? 'success' : 'error', title: text });
-        },
-    });
-</script>
 @endsection
