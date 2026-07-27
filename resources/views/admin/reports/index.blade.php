@@ -4,55 +4,103 @@
 
 @section('content')
 <div
-    x-data="{ tab: 'sales', dateRange: @js($dateRangeValue), init() { this.$nextTick(() => window.flatpickr && window.flatpickr(this.$refs.dateRange, { mode: 'range', dateFormat: 'Y-m-d', defaultDate: this.dateRange.split(' to '), onClose: (dates, value) => this.dateRange = value })) } }"
+    x-data="{
+        tab: 'sales',
+        dateRange: @js($dateRangeValue),
+        customerModal: false,
+        cust: { id: '', from: @js($dateFrom), to: @js($dateTo) },
+        customerUrl(base) {
+            const p = new URLSearchParams({ date_from: this.cust.from, date_to: this.cust.to });
+            if (this.cust.id) p.set('customer_id', this.cust.id);
+            return base + '?' + p.toString();
+        },
+        init() { this.$nextTick(() => window.flatpickr && window.flatpickr(this.$refs.dateRange, { mode: 'range', dateFormat: 'Y-m-d', defaultDate: this.dateRange.split(' to '), onClose: (dates, value) => this.dateRange = value })) }
+    }"
     class="space-y-4"
 >
-    <div class="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-            <div class="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-smoke px-2.5 py-1 text-xs font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
-                <span data-lucide="reports" class="h-3.5 w-3.5"></span>
-                Business reports
-            </div>
-            <h1 class="text-xl font-semibold tracking-normal">Reports</h1>
-            <p class="text-sm text-muted">Sales, receivables, inventory usage, customer ledger, and audit logs.</p>
-        </div>
-
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center">
-            <form method="GET" action="{{ route('admin.reports.index') }}" class="grid grid-cols-1 gap-2 sm:grid-cols-[12rem_16rem_auto]">
-                @if($canChooseBranch)
-                    <select name="branch_id" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-                        <option value="">All branches</option>
-                        @foreach($branches as $branch)
-                            <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
-                        @endforeach
-                    </select>
-                @else
-                    <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
-                @endif
-
-                <div class="flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 dark:border-gray-800 dark:bg-gray-950">
-                    <span data-lucide="calendar" class="h-4 w-4 text-muted"></span>
-                    <input x-ref="dateRange" x-model="dateRange" name="date_range" class="w-full bg-transparent text-sm outline-none" autocomplete="off">
+    <div class="rounded-xl border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:p-5">
+        <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+            <div>
+                <div class="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-smoke px-2.5 py-1 text-xs font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
+                    <span data-lucide="reports" class="h-3.5 w-3.5"></span>
+                    Business reports
                 </div>
+                <h1 class="text-xl font-semibold tracking-tight sm:text-2xl">Reports</h1>
+                <p class="text-sm text-muted">Choose a branch and date range, then view below or export — all from this page.</p>
+            </div>
 
-                <button class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
-                    <span data-lucide="search" class="h-4 w-4"></span>
-                    Apply
-                </button>
-            </form>
+            <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
+                <form method="GET" action="{{ route('admin.reports.index') }}" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    @if($canChooseBranch)
+                        <label class="block">
+                            <span class="mb-1 block text-xs font-medium text-muted">Branch</span>
+                            <select name="branch_id" class="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm sm:w-44 dark:border-gray-700 dark:bg-gray-950">
+                                <option value="">All branches</option>
+                                @foreach($branches as $branch)
+                                    <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
+                                @endforeach
+                            </select>
+                        </label>
+                    @else
+                        <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
+                    @endif
 
-            <a href="{{ route('admin.reports.pdf', request()->query()) }}" target="_blank" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900">
-                <span data-lucide="file-text" class="h-4 w-4"></span>
-                Full Reports PDF
-            </a>
-            <a href="{{ route('admin.reports.z-reading.pdf', request()->query()) }}" target="_blank" class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
-                <span data-lucide="receipt" class="h-4 w-4"></span>
-                Daily-Style Z Reading PDF
-            </a>
-            <a href="{{ route('admin.reports.customer-orders') }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900">
-                <span data-lucide="users" class="h-4 w-4"></span>
-                Customer Job Orders
-            </a>
+                    <label class="block">
+                        <span class="mb-1 block text-xs font-medium text-muted">Date range</span>
+                        <div class="flex h-10 items-center gap-2 rounded-lg border border-border bg-white px-3 sm:w-60 dark:border-gray-700 dark:bg-gray-950">
+                            <span data-lucide="calendar" class="h-4 w-4 shrink-0 text-muted"></span>
+                            <input x-ref="dateRange" x-model="dateRange" name="date_range" class="w-full bg-transparent text-sm outline-none" autocomplete="off">
+                        </div>
+                    </label>
+
+                    <div>
+                        <span aria-hidden="true" class="mb-1 hidden text-xs font-medium sm:block">&nbsp;</span>
+                        <button class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white shadow-sm transition hover:opacity-90 sm:w-auto">
+                            <span data-lucide="search" class="h-4 w-4"></span>
+                            Apply
+                        </button>
+                    </div>
+                </form>
+
+                <div x-data="{ open: false }" class="relative">
+                    <span aria-hidden="true" class="mb-1 hidden text-xs font-medium sm:block">&nbsp;</span>
+                    <button type="button" @click="open = ! open" class="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-semibold transition hover:bg-smoke sm:w-auto dark:border-gray-700 dark:bg-gray-950 dark:hover:bg-gray-900">
+                        <span data-lucide="download" class="h-4 w-4"></span>
+                        Export / Generate
+                        <span data-lucide="chevron-down" class="h-4 w-4 transition" :class="open && 'rotate-180'"></span>
+                    </button>
+
+                    <div
+                        x-cloak
+                        x-show="open"
+                        x-transition
+                        @click.outside="open = false"
+                        class="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-white shadow-xl dark:border-gray-800 dark:bg-gray-900"
+                    >
+                        <a href="{{ route('admin.reports.pdf', request()->query()) }}" target="_blank" class="flex items-start gap-3 px-3.5 py-3 text-sm transition hover:bg-smoke dark:hover:bg-gray-950">
+                            <span data-lucide="file-text" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
+                            <span>
+                                <span class="block font-medium whitespace-nowrap">Full Reports PDF</span>
+                                <span class="block text-xs text-muted">Every section for the selected range</span>
+                            </span>
+                        </a>
+                        <a href="{{ route('admin.reports.z-reading.pdf', request()->query()) }}" target="_blank" class="flex items-start gap-3 border-t border-border px-3.5 py-3 text-sm transition hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                            <span data-lucide="receipt" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
+                            <span>
+                                <span class="block font-medium whitespace-nowrap">Consolidated Z Reading PDF</span>
+                                <span class="block text-xs text-muted">Daily-style closing report</span>
+                            </span>
+                        </a>
+                        <button type="button" @click="open = false; customerModal = true" class="flex w-full items-start gap-3 border-t border-border px-3.5 py-3 text-left text-sm transition hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                            <span data-lucide="users" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
+                            <span>
+                                <span class="block font-medium whitespace-nowrap">Customer Job Orders</span>
+                                <span class="block text-xs text-muted">Pick a customer &amp; range, generate here</span>
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -399,5 +447,56 @@
             <tr><td colspan="5" class="px-4 py-10 text-center text-muted">No activity logs found.</td></tr>
         @endforelse
     </x-report-table>
+
+    {{-- Customer Job Orders — generated on this page, no navigation needed --}}
+    <div x-cloak x-show="customerModal" x-transition.opacity class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div @click.outside="customerModal = false" x-show="customerModal" x-transition class="w-full max-w-md rounded-xl border border-border bg-white p-5 shadow-2xl dark:border-gray-800 dark:bg-gray-900">
+            <div class="mb-4 flex items-start justify-between gap-3">
+                <div>
+                    <h2 class="text-lg font-semibold">Customer Job Orders</h2>
+                    <p class="text-sm text-muted">Pick a customer and range, then generate.</p>
+                </div>
+                <button type="button" @click="customerModal = false" class="rounded-md p-2 hover:bg-smoke dark:hover:bg-gray-800"><span data-lucide="x" class="h-4 w-4"></span></button>
+            </div>
+
+            <div class="space-y-3">
+                <div>
+                    <label class="mb-1 block text-xs font-medium text-muted">Customer</label>
+                    <select x-model="cust.id" class="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                        <option value="">Select a customer</option>
+                        @foreach($customers as $c)
+                            <option value="{{ $c->id }}">{{ $c->name }}{{ $c->phone ? ' - '.$c->phone : '' }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div>
+                        <label class="mb-1 block text-xs font-medium text-muted">From</label>
+                        <input type="date" x-model="cust.from" class="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </div>
+                    <div>
+                        <label class="mb-1 block text-xs font-medium text-muted">To</label>
+                        <input type="date" x-model="cust.to" class="h-10 w-full rounded-lg border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </div>
+                </div>
+                <p x-show="! cust.id" class="text-xs text-muted">Select a customer to enable generation.</p>
+            </div>
+
+            <div class="mt-5 flex items-center justify-end gap-2">
+                <a :href="customerUrl(@js(route('admin.reports.customer-orders')))" target="_blank"
+                   :class="! cust.id && 'pointer-events-none opacity-50'"
+                   class="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border bg-white px-4 text-sm font-medium hover:bg-smoke dark:border-gray-700 dark:bg-gray-950 dark:hover:bg-gray-900">
+                    <span data-lucide="table" class="h-4 w-4"></span>
+                    View on page
+                </a>
+                <a :href="customerUrl(@js(route('admin.reports.customer-orders.pdf')))" target="_blank"
+                   :class="! cust.id && 'pointer-events-none opacity-50'"
+                   class="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-white hover:opacity-90">
+                    <span data-lucide="file-text" class="h-4 w-4"></span>
+                    Generate PDF
+                </a>
+            </div>
+        </div>
+    </div>
 </div>
 @endsection

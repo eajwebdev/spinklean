@@ -407,6 +407,12 @@ class ReportController extends Controller
             ->orderBy('name')
             ->get();
 
+        $customers = Customer::query()
+            ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->orderBy('name')
+            ->get(['id', 'name', 'phone']);
+
         $payments = Payment::query()
             ->with(['branch', 'collectedBranch', 'customer', 'jobOrder', 'receiver'])
             ->whereIn('payment_type', ['cash', 'gcash', 'bank', 'unpaid', 'po', 'monthly_billing'])
@@ -739,6 +745,7 @@ class ReportController extends Controller
         return [
             'activityLogs' => $activityLogs,
             'branches' => $branches,
+            'customers' => $customers,
             'canChooseBranch' => $canChooseBranch,
             'customerLedger' => $customerLedger,
             'dateFrom' => $dateFrom,
