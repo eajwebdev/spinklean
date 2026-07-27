@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#05080F">
-  <title>Pay in one scan — Spin Klean Laundry JP</title>
+  <title>Pay in one scan — {{ $branchName ?? 'Spin Klean Laundry JP' }}</title>
   <!-- Vite placeholder (no actual assets) -->
   <!-- Fonts & base styles -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -367,7 +367,7 @@
   <section class="pitch">
     <div class="mark">
       <span>&#8369;</span>
-      <b>Spin Klean Laundry JP</b>
+      <b>{{ $branchName ?? 'Spin Klean Laundry JP' }}</b>
     </div>
     <p class="eyebrow">QRPH &middot; Cashless payment</p>
     <h1>Pay in <em>one scan</em>.</h1>
@@ -391,16 +391,16 @@
     <div class="qr" id="qrContainer">
       <b></b><b></b><b></b><b></b>
       <!-- QR image – using Blade's asset helper -->
-      <img id="qrImage" src="{{ asset('uploads/pay.png') }}" alt="QR code for paying Spin Klean Laundry JP">
+      <img id="qrImage" src="{{ asset($qrImage ?? 'uploads/pay.png') }}" alt="QR code for paying {{ $branchName ?? 'Spin Klean Laundry JP' }}">
     </div>
 
     <div class="perf"></div>
 
-    <p class="store">Spin Klean Laundry JP</p>
+    <p class="store">{{ $branchName ?? 'Spin Klean Laundry JP' }}</p>
     <p class="hint">Scan the code to pay. Amount is entered in your app.</p>
 
     <!-- DOWNLOAD BUTTON (added) -->
-    <a id="downloadQrBtn" class="dl-btn" download="SpinKlean_QR.png" href="#">
+    <a id="downloadQrBtn" class="dl-btn" download="{{ $qrDownload ?? 'SpinKlean_QR.png' }}" href="#">
       <svg viewBox="0 0 24 24"><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="2" x2="12" y2="16"/></svg>
       Download QR
     </a>
@@ -457,7 +457,7 @@
       var url = getImageUrl();
       if (url && url !== '#') {
         downloadBtn.href = url;
-        downloadBtn.download = 'SpinKlean_QR.png';
+        downloadBtn.download = @json($qrDownload ?? 'SpinKlean_QR.png');
       } else {
         // Fallback: if no valid URL, we'll try to use canvas to generate
         // But we keep it simple
