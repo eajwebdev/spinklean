@@ -42,10 +42,11 @@ class SmsNotifier
                 return;
             }
 
+            // Customers are only notified on creation and when the order is
+            // ready. The "completed" status intentionally sends no SMS.
             $template = match ($order->status) {
                 'ready_for_pickup' => 'sms_template_ready_for_pickup',
                 'ready_for_delivery' => 'sms_template_ready_for_delivery',
-                'completed' => 'sms_template_completed',
                 default => null,
             };
 
