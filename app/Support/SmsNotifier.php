@@ -314,7 +314,8 @@ class SmsNotifier
         $balance = $currency.' '.number_format((float) $order->balance, 2);
         $price = $currency.' '.number_format((float) $order->total, 2);
         $branchNumber = (string) ($order->branch?->contact_number ?: $settings->contact_number ?? '');
-        $payLink = rtrim((string) (config('app.url') ?: 'https://spinklean.online'), '/').'/pay';
+        $payLink = (string) ($order->branch?->qr_pay_url
+            ?: rtrim((string) (config('app.url') ?: 'https://spinklean.online'), '/').'/pay');
 
         return [
             // Canonical placeholders

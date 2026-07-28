@@ -20,6 +20,7 @@ class Branch extends Model
         'attendance_radius_meters',
         'machine_count',
         'subscription_price',
+        'qr_pay_url',
         'is_active',
     ];
 

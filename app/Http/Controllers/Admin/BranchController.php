@@ -153,6 +153,7 @@ class BranchController extends Controller
             'contact_number' => ['nullable', 'string', 'max:50'],
             'branch_type' => ['nullable', Rule::in(['full_service', 'pickup_dropoff'])],
             'machine_count' => ['nullable', 'integer', 'min:0', 'max:100'],
+            'qr_pay_url' => ['nullable', 'string', 'max:2048'],
             'is_active' => ['nullable', 'boolean'],
         ];
     }
