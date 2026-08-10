@@ -170,7 +170,49 @@
                 </thead>
                 <tbody class="divide-y divide-border dark:divide-gray-800">
                     @forelse($payments as $payment)
-                        <tr>
+                        <tr
+                            @if(in_array($payment->payment_type, ['cash', 'gcash'], true))
+                                x-data="{
+                                    type: @js($payment->payment_type),
+                                    reference: @js($payment->reference_no ?? ''),
+                                    savedType: @js($payment->payment_type),
+                                    savedReference: @js($payment->reference_no ?? ''),
+                                    saving: false,
+                                    error: '',
+                                    async save() {
+                                        if (this.type === 'cash') this.reference = '';
+                                        this.saving = true;
+                                        this.error = '';
+
+                                        try {
+                                            const response = await fetch(@js(route('admin.payments.update', $payment)), {
+                                                method: 'PATCH',
+                                                headers: {
+                                                    'Accept': 'application/json',
+                                                    'Content-Type': 'application/json',
+                                                    'X-CSRF-TOKEN': @js(csrf_token()),
+                                                },
+                                                body: JSON.stringify({ payment_type: this.type, reference_no: this.reference }),
+                                            });
+
+                                            if (!response.ok) throw new Error('Unable to save this payment.');
+
+                                            const result = await response.json();
+                                            this.type = result.payment_type;
+                                            this.reference = result.reference_no || '';
+                                            this.savedType = this.type;
+                                            this.savedReference = this.reference;
+                                        } catch (error) {
+                                            this.type = this.savedType;
+                                            this.reference = this.savedReference;
+                                            this.error = error.message;
+                                        } finally {
+                                            this.saving = false;
+                                        }
+                                    },
+                                }"
+                            @endif
+                        >
                             <td class="px-4 py-3">
                                 <p class="font-medium">{{ $payment->payment_number }}</p>
                                 <p class="text-xs text-muted">{{ $payment->paid_at?->format('M d, Y h:i A') ?? $payment->created_at->format('M d, Y h:i A') }}</p>
@@ -190,11 +232,42 @@
                                 @endif
                             </td>
                             <td class="px-4 py-3">
-                                <span class="{{ \App\Support\StatusBadge::classes($payment->payment_type) }}">
-                                    {{ \App\Support\StatusBadge::label($payment->payment_type) }}
-                                </span>
+                                @if(in_array($payment->payment_type, ['cash', 'gcash'], true))
+                                    <select
+                                        x-model="type"
+                                        x-on:change="save()"
+                                        x-bind:disabled="saving"
+                                        aria-label="Payment type for {{ $payment->payment_number }}"
+                                        class="h-8 rounded-md border border-border bg-white px-2 text-xs font-medium outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:opacity-60 dark:border-gray-700 dark:bg-gray-950"
+                                    >
+                                        <option value="cash">Cash</option>
+                                        <option value="gcash">GCash</option>
+                                    </select>
+                                @else
+                                    <span class="{{ \App\Support\StatusBadge::classes($payment->payment_type) }}">
+                                        {{ \App\Support\StatusBadge::label($payment->payment_type) }}
+                                    </span>
+                                @endif
                             </td>
-                            <td class="px-4 py-3">{{ $payment->reference_no ?: 'N/A' }}</td>
+                            <td class="min-w-44 px-4 py-3">
+                                @if(in_array($payment->payment_type, ['cash', 'gcash'], true))
+                                    <div class="flex items-center gap-2">
+                                        <input
+                                            x-model="reference"
+                                            x-on:change="save()"
+                                            x-on:keydown.enter.prevent="$el.blur()"
+                                            x-bind:disabled="type === 'cash' || saving"
+                                            x-bind:placeholder="type === 'cash' ? 'N/A' : 'Enter reference'"
+                                            aria-label="GCash reference for {{ $payment->payment_number }}"
+                                            class="h-8 w-32 rounded-md border border-border bg-white px-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:cursor-not-allowed disabled:bg-smoke disabled:text-muted dark:border-gray-700 dark:bg-gray-950 dark:disabled:bg-gray-900"
+                                        >
+                                        <span x-show="saving" class="text-xs text-muted">Saving...</span>
+                                    </div>
+                                    <p x-show="error" x-text="error" class="mt-1 text-xs text-red-600"></p>
+                                @else
+                                    {{ $payment->reference_no ?: 'N/A' }}
+                                @endif
+                            </td>
                             <td class="px-4 py-3">
                                 @if((int) ($payment->collected_branch_id ?: $payment->branch_id) !== (int) $payment->branch_id)
                                     <span class="{{ \App\Support\StatusBadge::classes('pending') }}">{{ \App\Support\StatusBadge::label($payment->settlement_status ?: 'pending') }}</span>

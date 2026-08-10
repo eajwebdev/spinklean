@@ -139,7 +139,10 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::patch('/job-orders/{jobOrder}/cancel', [JobOrderController::class, 'cancel'])->name('job-orders.cancel');
             Route::delete('/job-orders/{jobOrder}', [JobOrderController::class, 'destroy'])->name('job-orders.destroy');
         });
-        Route::get('/payments', [PaymentController::class, 'index'])->middleware('menu.access:payments')->name('payments.index');
+        Route::middleware('menu.access:payments')->group(function () {
+            Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
+            Route::patch('/payments/{payment}', [PaymentController::class, 'update'])->name('payments.update');
+        });
         Route::middleware('menu.access:inventory')->group(function () {
             Route::resource('inventory', InventoryController::class)->only(['index', 'store', 'update', 'destroy']);
             Route::post('/inventory/{inventory}/movements', [InventoryController::class, 'storeMovement'])->name('inventory.movements.store');

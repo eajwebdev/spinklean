@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\Payment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Validation\Rule;
 
 class PaymentController extends Controller
 {
@@ -98,6 +99,36 @@ class PaymentController extends Controller
             'dateFrom',
             'dateTo'
         ) + ['paymentTypes' => self::UI_PAYMENT_TYPES]);
+    }
+
+    public function update(Request $request, Payment $payment)
+    {
+        $user = $request->user();
+
+        abort_unless(
+            $this->canChooseBranch($user)
+                || (int) $payment->branch_id === (int) $user->branch_id
+                || (int) ($payment->collected_branch_id ?: $payment->branch_id) === (int) $user->branch_id,
+            403
+        );
+
+        $validated = $request->validate([
+            'payment_type' => ['required', Rule::in(['cash', 'gcash'])],
+            'reference_no' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $reference = trim((string) ($validated['reference_no'] ?? ''));
+
+        $payment->update([
+            'payment_type' => $validated['payment_type'],
+            'reference_no' => $validated['payment_type'] === 'cash' || $reference === '' ? null : $reference,
+        ]);
+
+        return response()->json([
+            'message' => 'Payment updated.',
+            'payment_type' => $payment->payment_type,
+            'reference_no' => $payment->reference_no,
+        ]);
     }
 
     private function canChooseBranch($user): bool

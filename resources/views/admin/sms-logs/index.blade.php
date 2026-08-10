@@ -60,7 +60,27 @@
                             <td class="px-4 py-3 font-medium">{{ $log->recipient }}</td>
                             <td class="px-4 py-3">{{ $log->customer?->name ?? 'N/A' }}</td>
                             <td class="px-4 py-3">{{ $log->branch?->name ?? 'N/A' }}</td>
-                            <td class="max-w-md px-4 py-3"><p class="truncate" title="{{ $log->message }}">{{ $log->message }}</p><p class="text-xs text-muted">{{ $log->response }}</p></td>
+                            <td class="max-w-md px-4 py-3">
+                                @php($hasLongMessage = \Illuminate\Support\Str::length($log->message) > 90)
+                                <div x-data="{ expanded: false }">
+                                    <p
+                                        x-bind:class="expanded ? 'whitespace-pre-wrap break-words' : 'truncate'"
+                                        @if(! $hasLongMessage) title="{{ $log->message }}" @endif
+                                    >{{ $log->message }}</p>
+
+                                    @if($hasLongMessage)
+                                        <button
+                                            type="button"
+                                            x-on:click="expanded = !expanded"
+                                            x-bind:aria-expanded="expanded"
+                                            class="mt-1 text-xs font-medium text-primary hover:underline"
+                                        >
+                                            <span x-text="expanded ? 'View less' : 'View more'">View more</span>
+                                        </button>
+                                    @endif
+                                </div>
+                                <p class="mt-1 text-xs text-muted">{{ $log->response }}</p>
+                            </td>
                             <td class="px-4 py-3"><span class="{{ \App\Support\StatusBadge::classes($log->status) }}">{{ \App\Support\StatusBadge::label($log->status) }}</span></td>
                             <td class="px-4 py-3">{{ $log->created_at->format('M d, Y h:i A') }}</td>
                         </tr>
