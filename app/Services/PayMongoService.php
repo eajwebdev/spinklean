@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\SystemSetting;
 use App\Models\BranchBillingRecord;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Request;
@@ -52,7 +53,7 @@ class PayMongoService
         $payload = [
             'data' => [
                 'attributes' => [
-                    'billing' => ['name' => $branchName],
+                    'billing' => $this->billingDetails($branchName),
                     'send_email_receipt' => false,
                     'show_description' => true,
                     'show_line_items' => true,
@@ -139,7 +140,7 @@ class PayMongoService
             'data' => [
                 'attributes' => [
                     'type' => 'qrph',
-                    'billing' => ['name' => $branchName],
+                    'billing' => $this->billingDetails($branchName),
                 ],
             ],
         ]);
@@ -215,6 +216,28 @@ class PayMongoService
         }
 
         return 'data:image/png;base64,'.$image;
+    }
+
+    private function billingDetails(string $name): array
+    {
+        $settings = SystemSetting::current();
+        $email = $this->validEmail($settings->business_email ?? null);
+
+        if (! $email) {
+            throw new RuntimeException('PayMongo requires a billing email. Add a valid Business Email in Admin Settings.');
+        }
+
+        return [
+            'name' => $name,
+            'email' => $email,
+        ];
+    }
+
+    private function validEmail(?string $email): ?string
+    {
+        $email = trim((string) $email);
+
+        return filter_var($email, FILTER_VALIDATE_EMAIL) ? $email : null;
     }
 
     /**
