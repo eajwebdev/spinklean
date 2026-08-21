@@ -36,7 +36,7 @@ Route::get('/pay', function () {
 // Per-branch static QRPH payment pages, e.g. /osmena/pay and /pacana/pay.
 Route::get('/{branch}/pay', function (string $branch) {
     $map = [
-        'osmena' => ['image' => 'uploads/pay-osmena.png', 'name' => 'Spin Klean Laundry - Osmeña', 'download' => 'SpinKlean-Osmena-QR.png'],
+        'osmena' => ['image' => 'uploads/pay-osmenav2.png', 'name' => 'Spin Klean Laundry - Osmeña', 'download' => 'SpinKlean-Osmena-QR.png'],
         'pacana' => ['image' => 'uploads/pay-pacana.jpg', 'name' => 'Spin Klean Laundry - Pacana', 'download' => 'SpinKlean-Pacana-QR.jpg'],
     ];
 
