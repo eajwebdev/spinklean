@@ -3,7 +3,10 @@
 @section('page_title', 'PO Statement of Account')
 
 @section('content')
-@php($currency = $settings->currency ?? 'PHP')
+@php
+    $currency = $settings->currency ?? 'PHP';
+    $dateRangeValue = request('date_range') ?: $dateFrom.' to '.$dateTo;
+@endphp
 <div class="space-y-4">
     <div class="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 lg:flex-row lg:items-center lg:justify-between">
         <div>
@@ -28,44 +31,87 @@
         </div>
     </div>
 
-    <form method="GET" action="{{ route('admin.po-transactions.statement-of-account') }}" class="grid gap-2 rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900 md:grid-cols-2 xl:grid-cols-[1fr_1.4fr_1fr_10rem_10rem_auto]">
-        @if($canChooseBranch)
-            <select name="branch_id" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-                <option value="">All branches</option>
-                @foreach($branches as $branch)
-                    <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
-                @endforeach
-            </select>
-        @else
-            <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
-        @endif
+    <form
+        method="GET"
+        action="{{ route('admin.po-transactions.statement-of-account') }}"
+        x-data="{
+            dateRange: @js($dateRangeValue),
+            init() {
+                this.$nextTick(() => {
+                    if (!window.flatpickr) return;
+                    window.flatpickr(this.$refs.dateRange, {
+                        mode: 'range',
+                        dateFormat: 'Y-m-d',
+                        defaultDate: this.dateRange ? this.dateRange.split(' to ') : null,
+                        onClose: (dates, value) => this.dateRange = value,
+                    });
+                });
+            },
+        }"
+        class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900"
+    >
+        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:items-end">
+            <label class="min-w-0 xl:flex-1">
+                <span class="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">PO Customer</span>
+                <select name="customer_id" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                    <option value="">Select customer...</option>
+                    @foreach($customers as $option)
+                        <option value="{{ $option->id }}" @selected($customer && (int) $customer->id === (int) $option->id)>
+                            {{ $option->name }}{{ $option->phone ? ' - '.$option->phone : '' }}
+                        </option>
+                    @endforeach
+                </select>
+            </label>
 
-        <select name="customer_id" required class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-            <option value="">Select PO customer...</option>
-            @foreach($customers as $option)
-                <option value="{{ $option->id }}" @selected($customer && (int) $customer->id === (int) $option->id)>{{ $option->name }}</option>
-            @endforeach
-        </select>
+            @if($canChooseBranch)
+                <label class="xl:w-48">
+                    <span class="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">Branch</span>
+                    <select name="branch_id" onchange="this.form.customer_id.value = ''; this.form.submit()" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                        <option value="">All branches</option>
+                        @foreach($branches as $branch)
+                            <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
+                        @endforeach
+                    </select>
+                </label>
+            @else
+                <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
+            @endif
 
-        <select name="status" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-            <option value="">All statuses</option>
-            @foreach($statuses as $status)
-                <option value="{{ $status }}" @selected($selectedStatus === $status)>{{ \App\Support\StatusBadge::label($status) }}</option>
-            @endforeach
-        </select>
+            <label class="xl:w-44">
+                <span class="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">PO Status</span>
+                <select name="status" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                    <option value="">All statuses</option>
+                    @foreach($statuses as $status)
+                        <option value="{{ $status }}" @selected($selectedStatus === $status)>{{ \App\Support\StatusBadge::label($status) }}</option>
+                    @endforeach
+                </select>
+            </label>
 
-        <input type="date" name="date_from" value="{{ $dateFrom }}" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-        <input type="date" name="date_to" value="{{ $dateTo }}" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+            <label class="xl:w-64">
+                <span class="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">Statement Period</span>
+                <span class="flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 dark:border-gray-800 dark:bg-gray-950">
+                    <span data-lucide="calendar" class="h-4 w-4 shrink-0 text-muted"></span>
+                    <input x-ref="dateRange" x-model="dateRange" name="date_range" type="text" required autocomplete="off" placeholder="Select date range" class="min-w-0 flex-1 bg-transparent text-sm outline-none">
+                </span>
+            </label>
 
-        <button type="submit" class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
-            <span data-lucide="search" class="h-4 w-4"></span>
-            Generate
-        </button>
+            <div class="flex items-center gap-2 sm:col-span-2 xl:col-span-1 xl:shrink-0">
+                <button type="submit" class="inline-flex h-9 flex-1 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90 xl:flex-none">
+                    <span data-lucide="file-search" class="h-4 w-4"></span>
+                    Generate
+                </button>
+                <a href="{{ route('admin.po-transactions.statement-of-account') }}" title="Clear filters" aria-label="Clear statement filters" class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                    <span data-lucide="rotate-ccw" class="h-4 w-4"></span>
+                </a>
+            </div>
+        </div>
     </form>
 
     @if(! $customer)
-        <div class="rounded-lg border border-dashed border-border bg-white p-10 text-center text-sm text-muted dark:border-gray-800 dark:bg-gray-900">
-            Select a PO customer and date range to generate their Statement of Account.
+        <div class="rounded-lg border border-dashed border-border bg-white p-6 text-center dark:border-gray-800 dark:bg-gray-900">
+            <span data-lucide="file-search" class="mx-auto mb-2 h-6 w-6 text-muted"></span>
+            <p class="text-sm font-medium">Choose a PO customer to begin</p>
+            <p class="mt-1 text-xs text-muted">The report will use the selected period, branch, and PO status.</p>
         </div>
     @else
         <div class="grid gap-3 md:grid-cols-4">
