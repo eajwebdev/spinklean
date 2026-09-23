@@ -208,16 +208,12 @@ class CycleController extends Controller
             )
             ->all() : [];
 
-        $activityDateFrom = $dateFrom ?: now()->toDateString();
-        $activityDateTo = $dateTo ?: now()->toDateString();
-        $machineActivityByBranch = $hasMachineOverview ? DB::table('cycle_records')
+        $machineUsageByBranch = $hasMachineOverview ? DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
             ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
-            ->where('cycle_records.started_at', '>=', Carbon::parse($activityDateFrom)->startOfDay())
-            ->where('cycle_records.started_at', '<=', Carbon::parse($activityDateTo)->endOfDay())
             ->whereIn(DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'), $machineOverviewBranchIds)
             ->groupByRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id), cycle_records.machine_number, cycle_records.cycle_type')
             ->get([
@@ -244,9 +240,7 @@ class CycleController extends Controller
             'orders' => $orders,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
-            'activityDateFrom' => $activityDateFrom,
-            'activityDateTo' => $activityDateTo,
-            'machineActivityByBranch' => $machineActivityByBranch,
+            'machineUsageByBranch' => $machineUsageByBranch,
             'machineOverviewBranches' => $machineOverviewBranches,
             'selectedBranchId' => $selectedBranchId,
             'selectedCustomerId' => $selectedCustomerId,

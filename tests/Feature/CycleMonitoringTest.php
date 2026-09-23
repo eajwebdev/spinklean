@@ -623,7 +623,7 @@ class CycleMonitoringTest extends TestCase
         ]);
     }
 
-    public function test_machine_overview_shows_live_image_and_filtered_daily_activity(): void
+    public function test_machine_overview_shows_live_image_and_lifetime_usage(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -694,11 +694,11 @@ class CycleMonitoringTest extends TestCase
                 'Wash #1',
                 'unavailable.png',
                 '>1</p>',
-                'Washing cycles',
+                'Total washing cycles',
                 'Dry Machines',
                 'Dry #1',
                 '>1</p>',
-                'Drying cycles',
+                'Total drying cycles',
             ], false)
             ->assertDontSee('JO-MACHINE-HIDDEN');
 
@@ -729,15 +729,18 @@ class CycleMonitoringTest extends TestCase
         $hiddenOrder = $this->createJobOrder($branch, $hiddenCustomer, 'JO-USAGE-HIDDEN');
         $hiddenOrder->update(['status' => 'completed', 'completed_at' => '2026-06-10 12:00:00']);
 
-        foreach ([$visibleOrder, $hiddenOrder] as $order) {
+        $cancelledOrder = $this->createJobOrder($branch, $hiddenCustomer, 'JO-USAGE-CANCELLED');
+        $cancelledOrder->update(['status' => 'cancelled']);
+
+        foreach ([$visibleOrder, $hiddenOrder, $cancelledOrder] as $index => $order) {
             CycleRecord::query()->create([
                 'job_order_id' => $order->id,
                 'user_id' => $user->id,
                 'cycle_type' => 'wash',
                 'machine_number' => 1,
                 'cycle_number' => 1,
-                'started_at' => '2026-06-10 09:00:00',
-                'ended_at' => '2026-06-10 10:00:00',
+                'started_at' => $index === 0 ? '2026-06-10 09:00:00' : '2026-05-10 09:00:00',
+                'ended_at' => $index === 0 ? '2026-06-10 10:00:00' : '2026-05-10 10:00:00',
             ]);
         }
 
@@ -754,9 +757,10 @@ class CycleMonitoringTest extends TestCase
             ->assertSeeInOrder([
                 'Wash #1',
                 '>2</p>',
-                'Washing cycles',
+                'Total washing cycles',
             ], false)
-            ->assertSee('Usage counts by cycle date only');
+            ->assertSee('Cumulative usage since the first recorded cycle')
+            ->assertDontSee('Usage counts by cycle date only');
     }
 
     public function test_cycle_monitoring_keeps_large_lists_and_history_bounded(): void

@@ -4,9 +4,12 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
+use App\Models\Customer;
 use App\Models\PoTransaction;
 use App\Models\PoTransactionPayment;
+use App\Models\SystemSetting;
 use App\Support\Activity;
+use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,11 +31,14 @@ class PoTransactionController extends Controller
             ->orderBy('name')
             ->get();
 
+        $customers = $this->poCustomers($branchId, $canChooseBranch ? null : (int) $user->branch_id);
+
         $baseQuery = PoTransaction::query()
             ->with(['branch', 'customer', 'jobOrder', 'payments.receiver'])
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->when($dateFrom, fn ($query) => $query->whereDate('transaction_date', '>=', $dateFrom))
             ->when($dateTo, fn ($query) => $query->whereDate('transaction_date', '<=', $dateTo))
+            ->when($request->integer('customer_id'), fn ($query, $customerId) => $query->where('customer_id', $customerId))
             ->when(in_array($request->status, PoTransaction::STATUSES, true), fn ($query) => $query->where('status', $request->status))
             ->when($request->filled('search'), function ($query) use ($request) {
                 $search = $request->search;
@@ -59,12 +65,32 @@ class PoTransactionController extends Controller
         return view('admin.po-transactions.index', [
             'branches' => $branches,
             'canChooseBranch' => $canChooseBranch,
+            'customers' => $customers,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
             'statuses' => PoTransaction::STATUSES,
             'summary' => $summary,
             'transactions' => $transactions,
         ]);
+    }
+
+    public function statementOfAccount(Request $request)
+    {
+        return view('admin.po-transactions.statement-of-account', $this->statementOfAccountData($request));
+    }
+
+    public function statementOfAccountPdf(Request $request)
+    {
+        $data = $this->statementOfAccountData($request);
+
+        abort_unless($data['customer'], 404, 'Select a PO customer first.');
+
+        $filename = 'po-statement-of-account-'.str($data['customer']->name)->slug().'-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf';
+
+        return Pdf::loadView('admin.po-transactions.statement-of-account-pdf', [
+            ...$data,
+            'generatedAt' => now(),
+        ])->setPaper('a4', 'portrait')->stream($filename);
     }
 
     public function update(Request $request, PoTransaction $poTransaction)
@@ -161,7 +187,82 @@ class PoTransactionController extends Controller
         abort_unless((int) $request->user()->branch_id === (int) $poTransaction->branch_id, 403);
     }
 
-    private function dateRange(Request $request): array
+    private function statementOfAccountData(Request $request): array
+    {
+        $user = $request->user();
+        $canChooseBranch = $user->isAdmin();
+        [$dateFrom, $dateTo] = $this->dateRange(
+            $request,
+            today()->startOfMonth()->toDateString(),
+            today()->toDateString()
+        );
+        $branchId = $canChooseBranch ? ($request->integer('branch_id') ?: null) : (int) $user->branch_id;
+
+        $branches = Branch::query()
+            ->where('is_active', true)
+            ->when(! $canChooseBranch, fn ($query) => $query->whereKey($user->branch_id))
+            ->orderBy('name')
+            ->get();
+        $customers = $this->poCustomers($branchId, $canChooseBranch ? null : (int) $user->branch_id);
+        $customerId = $request->integer('customer_id') ?: null;
+        $customer = $customerId
+            ? Customer::query()
+                ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+                ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+                ->find($customerId)
+            : null;
+        $transactions = collect();
+
+        if ($customer) {
+            $transactions = PoTransaction::query()
+                ->with([
+                    'branch:id,name,code',
+                    'jobOrder:id,job_order_number,status',
+                    'payments' => fn ($query) => $query->with('receiver:id,name')->orderBy('paid_at')->orderBy('id'),
+                ])
+                ->where('customer_id', $customer->id)
+                ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+                ->whereDate('transaction_date', '>=', $dateFrom)
+                ->whereDate('transaction_date', '<=', $dateTo)
+                ->when(in_array($request->status, PoTransaction::STATUSES, true), fn ($query) => $query->where('status', $request->status))
+                ->orderBy('transaction_date')
+                ->orderBy('id')
+                ->get();
+        }
+
+        return [
+            'settings' => SystemSetting::current(),
+            'branches' => $branches,
+            'customers' => $customers,
+            'customer' => $customer,
+            'transactions' => $transactions,
+            'payments' => $transactions->flatMap->payments->sortBy('paid_at')->values(),
+            'summary' => [
+                'transactions' => $transactions->count(),
+                'amount' => round((float) $transactions->sum('amount'), 2),
+                'paid' => round((float) $transactions->sum('paid_amount'), 2),
+                'balance' => round((float) $transactions->sum('balance'), 2),
+            ],
+            'statuses' => PoTransaction::STATUSES,
+            'selectedBranchId' => $branchId,
+            'selectedStatus' => in_array($request->status, PoTransaction::STATUSES, true) ? $request->status : null,
+            'dateFrom' => $dateFrom,
+            'dateTo' => $dateTo,
+            'canChooseBranch' => $canChooseBranch,
+        ];
+    }
+
+    private function poCustomers(?int $branchId, ?int $restrictedBranchId)
+    {
+        return Customer::query()
+            ->whereHas('poTransactions')
+            ->when($restrictedBranchId, fn ($query) => $query->where('branch_id', $restrictedBranchId))
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->orderBy('name')
+            ->get(['id', 'branch_id', 'name', 'phone', 'email', 'address']);
+    }
+
+    private function dateRange(Request $request, ?string $defaultFrom = null, ?string $defaultTo = null): array
     {
         if ($request->filled('date_range')) {
             $parts = preg_split('/\s+to\s+/', $request->date_range);
@@ -179,7 +280,10 @@ class PoTransactionController extends Controller
             return [$from, $to];
         }
 
-        return [today()->toDateString(), today()->toDateString()];
+        return [
+            $defaultFrom ?? today()->toDateString(),
+            $defaultTo ?? today()->toDateString(),
+        ];
     }
 
     private function parseDate(?string $date): ?string

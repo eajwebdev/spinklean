@@ -155,6 +155,8 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         });
         Route::middleware('menu.access:po_transactions')->group(function () {
             Route::get('/po-transactions', [PoTransactionController::class, 'index'])->name('po-transactions.index');
+            Route::get('/po-transactions/statement-of-account', [PoTransactionController::class, 'statementOfAccount'])->name('po-transactions.statement-of-account');
+            Route::get('/po-transactions/statement-of-account/pdf', [PoTransactionController::class, 'statementOfAccountPdf'])->name('po-transactions.statement-of-account.pdf');
             Route::patch('/po-transactions/{poTransaction}', [PoTransactionController::class, 'update'])->name('po-transactions.update');
         });
         Route::middleware('menu.access:cycles')->group(function () {

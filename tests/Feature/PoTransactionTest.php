@@ -333,6 +333,98 @@ class PoTransactionTest extends TestCase
         $this->assertSame(850.0, (float) $order->fresh()->balance);
     }
 
+    public function test_po_statement_of_account_reports_active_transactions_and_excludes_cancelled_receivables(): void
+    {
+        $this->settings();
+
+        $user = User::factory()->create(['role' => 'super_admin']);
+        $branch = Branch::query()->create(['name' => 'Main Branch', 'code' => 'MAIN', 'is_active' => true]);
+        $customer = Customer::query()->create([
+            'branch_id' => $branch->id,
+            'name' => 'Statement Customer',
+            'email' => 'billing@example.test',
+            'billing_type' => 'po',
+            'is_active' => true,
+        ]);
+        $activeOrder = $this->poOrder($branch, $customer, $user, 'JO-SOA-ACTIVE', 500);
+        $activePo = PoTransaction::query()->create([
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'job_order_id' => $activeOrder->id,
+            'company_name' => $customer->name,
+            'po_number' => 'PO-SOA-ACTIVE',
+            'transaction_date' => today(),
+            'amount' => 500,
+            'paid_amount' => 200,
+            'balance' => 300,
+            'status' => 'partially_paid',
+        ]);
+        PoTransactionPayment::query()->create([
+            'po_transaction_id' => $activePo->id,
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'job_order_id' => $activeOrder->id,
+            'received_by' => $user->id,
+            'payment_number' => 'POPAY-SOA-0001',
+            'payment_method' => 'bank',
+            'reference_no' => 'BANK-SOA-001',
+            'amount' => 200,
+            'paid_at' => now(),
+        ]);
+
+        $cancelledOrder = $this->poOrder($branch, $customer, $user, 'JO-SOA-CANCELLED', 900);
+        $cancelledOrder->update(['status' => 'cancelled', 'balance' => 0]);
+        PoTransaction::withoutGlobalScope('financially_active')->create([
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'job_order_id' => $cancelledOrder->id,
+            'company_name' => $customer->name,
+            'po_number' => 'PO-SOA-CANCELLED',
+            'transaction_date' => today(),
+            'amount' => 900,
+            'balance' => 900,
+            'status' => 'pending',
+        ]);
+
+        $regularCustomer = Customer::query()->create([
+            'branch_id' => $branch->id,
+            'name' => 'Cancelled Receivable Customer',
+            'billing_type' => 'regular',
+            'is_active' => true,
+        ]);
+        $cancelledReceivable = $this->poOrder($branch, $regularCustomer, $user, 'JO-RECEIVABLE-CANCELLED', 700);
+        $cancelledReceivable->update(['status' => 'cancelled']);
+
+        $parameters = [
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'date_from' => today()->toDateString(),
+            'date_to' => today()->toDateString(),
+        ];
+
+        $this->actingAs($user)
+            ->get(route('admin.po-transactions.statement-of-account', $parameters))
+            ->assertOk()
+            ->assertSee('PO Statement of Account')
+            ->assertSee('PO-SOA-ACTIVE')
+            ->assertSee('POPAY-SOA-0001')
+            ->assertSee('PHP 500.00')
+            ->assertSee('PHP 200.00')
+            ->assertSee('PHP 300.00')
+            ->assertDontSee('PO-SOA-CANCELLED')
+            ->assertDontSee('JO-SOA-CANCELLED');
+
+        $this->actingAs($user)
+            ->get(route('admin.po-transactions.statement-of-account.pdf', $parameters))
+            ->assertOk()
+            ->assertHeader('content-type', 'application/pdf');
+
+        $this->actingAs($user)
+            ->get(route('admin.receivables.index'))
+            ->assertOk()
+            ->assertDontSee('JO-RECEIVABLE-CANCELLED');
+    }
+
     private function settings(): void
     {
         SystemSetting::query()->create([
