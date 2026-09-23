@@ -36,6 +36,29 @@
         action="{{ route('admin.po-transactions.statement-of-account') }}"
         x-data="{
             dateRange: @js($dateRangeValue),
+            customers: @js($customers->map(fn ($option) => [
+                'id' => (string) $option->id,
+                'label' => $option->name.($option->phone ? ' - '.$option->phone : ''),
+                'search' => strtolower(collect([$option->name, $option->phone, $option->email])->filter()->implode(' ')),
+            ])->values()),
+            selectedCustomerId: @js($customer ? (string) $customer->id : ''),
+            customerSearch: @js($customer ? $customer->name.($customer->phone ? ' - '.$customer->phone : '') : ''),
+            customerOpen: false,
+            get filteredCustomers() {
+                const term = this.customerSearch.toLowerCase().trim();
+                return term ? this.customers.filter(customer => customer.search.includes(term)) : this.customers;
+            },
+            selectCustomer(customer) {
+                this.selectedCustomerId = customer.id;
+                this.customerSearch = customer.label;
+                this.customerOpen = false;
+            },
+            clearCustomer() {
+                this.selectedCustomerId = '';
+                this.customerSearch = '';
+                this.customerOpen = true;
+                this.$nextTick(() => this.$refs.customerSearch.focus());
+            },
             init() {
                 this.$nextTick(() => {
                     if (!window.flatpickr) return;
@@ -48,20 +71,43 @@
                 });
             },
         }"
+        @submit="if (!selectedCustomerId) { $event.preventDefault(); customerOpen = true; $refs.customerSearch.focus(); }"
         class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900"
     >
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:flex xl:items-end">
-            <label class="min-w-0 xl:flex-1">
+            <div class="relative min-w-0 xl:flex-1" @click.outside="customerOpen = false">
                 <span class="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted">PO Customer</span>
-                <select name="customer_id" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
-                    <option value="">Select customer...</option>
-                    @foreach($customers as $option)
-                        <option value="{{ $option->id }}" @selected($customer && (int) $customer->id === (int) $option->id)>
-                            {{ $option->name }}{{ $option->phone ? ' - '.$option->phone : '' }}
-                        </option>
-                    @endforeach
-                </select>
-            </label>
+                <input type="hidden" name="customer_id" :value="selectedCustomerId">
+                <div class="flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 focus-within:border-primary dark:border-gray-800 dark:bg-gray-950">
+                    <span data-lucide="search" class="h-4 w-4 shrink-0 text-muted"></span>
+                    <input
+                        x-ref="customerSearch"
+                        x-model="customerSearch"
+                        @focus="customerOpen = true"
+                        @input="selectedCustomerId = ''; customerOpen = true"
+                        @keydown.escape="customerOpen = false"
+                        type="search"
+                        autocomplete="off"
+                        placeholder="Search customer name, phone, or email..."
+                        class="min-w-0 flex-1 bg-transparent text-sm outline-none"
+                    >
+                    <button x-show="selectedCustomerId" type="button" @click="clearCustomer()" title="Clear customer" aria-label="Clear selected customer" class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-smoke dark:hover:bg-gray-800">
+                        <span data-lucide="x" class="h-3.5 w-3.5"></span>
+                    </button>
+                    <button x-show="!selectedCustomerId" type="button" @click="customerOpen = !customerOpen; if (customerOpen) $nextTick(() => $refs.customerSearch.focus())" title="Show PO customers" aria-label="Show PO customers" class="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded hover:bg-smoke dark:hover:bg-gray-800">
+                        <span data-lucide="chevron-down" class="h-3.5 w-3.5"></span>
+                    </button>
+                </div>
+                <div x-cloak x-show="customerOpen" x-transition class="absolute z-40 mt-1 max-h-64 w-full overflow-y-auto rounded-md border border-border bg-white p-1 shadow-xl dark:border-gray-800 dark:bg-gray-950">
+                    <template x-for="option in filteredCustomers" :key="option.id">
+                        <button type="button" @click="selectCustomer(option)" class="flex w-full items-center justify-between gap-3 rounded px-3 py-2 text-left text-sm hover:bg-smoke dark:hover:bg-gray-900">
+                            <span class="min-w-0 truncate" x-text="option.label"></span>
+                            <span x-show="String(selectedCustomerId) === String(option.id)" data-lucide="check" class="h-4 w-4 shrink-0 text-primary"></span>
+                        </button>
+                    </template>
+                    <div x-show="filteredCustomers.length === 0" class="px-3 py-6 text-center text-sm text-muted">No PO customers found.</div>
+                </div>
+            </div>
 
             @if($canChooseBranch)
                 <label class="xl:w-48">

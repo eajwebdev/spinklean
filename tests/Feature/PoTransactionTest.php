@@ -406,6 +406,7 @@ class PoTransactionTest extends TestCase
             ->get(route('admin.po-transactions.statement-of-account', $parameters))
             ->assertOk()
             ->assertSee('PO Statement of Account')
+            ->assertSee('Search customer name, phone, or email...')
             ->assertSee('PO-SOA-ACTIVE')
             ->assertSee('POPAY-SOA-0001')
             ->assertSee('PHP 500.00')
