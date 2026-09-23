@@ -81,7 +81,7 @@
                     <h2 class="mt-1 text-lg font-semibold">Live availability</h2>
                 </div>
                 <p class="text-xs text-muted">
-                    Cumulative usage since the first recorded cycle
+                    Latest Z Reading plus cycles recorded afterward
                 </p>
             </div>
 
@@ -89,7 +89,7 @@
                 @foreach($machineOverviewBranches as $machineBranch)
                     @php($machineTotal = (int) $machineBranch->machine_count)
                     @php($branchActiveMachines = $activeMachinesByBranch[$machineBranch->id] ?? [])
-                    @php($branchMachineUsage = $machineUsageByBranch[$machineBranch->id] ?? [])
+                    @php($branchMachineReadings = $machineCounterReadingsByBranch[$machineBranch->id] ?? [])
                     <article>
                         <div class="mb-2 flex items-center justify-between gap-3">
                             <div>
@@ -110,7 +110,7 @@
                                             @for($machine = 1; $machine <= $machineTotal; $machine++)
                                                 @php($activeMachine = data_get($branchActiveMachines, $machineType.'.'.$machine))
                                                 @php($isAvailable = ! $activeMachine)
-                                                @php($usageCount = (int) data_get($branchMachineUsage, $machine.'.'.$machineType, 0))
+                                                @php($counterReading = (int) data_get($branchMachineReadings, $machine.'.'.$machineType, 0))
                                                 <div class="machine-status-card min-w-0 overflow-hidden rounded-xl border border-border bg-gradient-to-b from-white to-slate-50 shadow-sm dark:border-gray-800 dark:from-gray-900 dark:to-gray-950">
                                                     <div class="flex items-center justify-between px-2.5 py-2">
                                                         <span class="truncate text-xs font-semibold">{{ $machineType === 'wash' ? 'Wash' : 'Dry' }} #{{ $machine }}</span>
@@ -126,8 +126,8 @@
                                                         class="machine-status-image {{ $isAvailable ? 'machine-status-image-ready' : 'machine-status-image-running' }} mx-auto h-20 w-20 rounded-lg object-cover"
                                                     >
                                                     <div class="border-t border-border px-1.5 py-1.5 text-center dark:border-gray-800">
-                                                        <p class="text-base font-bold {{ $machineType === 'wash' ? 'text-sky-600' : 'text-violet-600' }}">{{ number_format($usageCount) }}</p>
-                                                        <p class="text-[9px] font-semibold uppercase tracking-wide text-muted">{{ $machineType === 'wash' ? 'Total washing cycles' : 'Total drying cycles' }}</p>
+                                                        <p class="text-base font-bold {{ $machineType === 'wash' ? 'text-sky-600' : 'text-violet-600' }}">{{ str_pad((string) $counterReading, 4, '0', STR_PAD_LEFT) }}</p>
+                                                        <p class="text-[9px] font-semibold uppercase tracking-wide text-muted">{{ $machineType === 'wash' ? 'Current washer reading' : 'Current dryer reading' }}</p>
                                                     </div>
                                                     @if(! $isAvailable)
                                                         <div class="border-t border-border px-2 py-1.5 text-center text-[10px] font-medium text-red-600 dark:border-gray-800" title="{{ $activeMachine['job_order_number'] }}">

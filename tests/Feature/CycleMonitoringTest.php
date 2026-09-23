@@ -623,7 +623,7 @@ class CycleMonitoringTest extends TestCase
         ]);
     }
 
-    public function test_machine_overview_shows_live_image_and_lifetime_usage(): void
+    public function test_machine_overview_shows_live_image_and_current_counter_reading(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -693,12 +693,12 @@ class CycleMonitoringTest extends TestCase
             ->assertSeeInOrder([
                 'Wash #1',
                 'unavailable.png',
-                '>1</p>',
-                'Total washing cycles',
+                '>0001</p>',
+                'Current washer reading',
                 'Dry Machines',
                 'Dry #1',
-                '>1</p>',
-                'Total drying cycles',
+                '>0001</p>',
+                'Current dryer reading',
             ], false)
             ->assertDontSee('JO-MACHINE-HIDDEN');
 
@@ -706,7 +706,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(5, substr_count($response->getContent(), 'text-xs font-semibold">Dry #'));
     }
 
-    public function test_machine_usage_counts_ignore_search_customer_and_status_filters(): void
+    public function test_machine_counter_uses_latest_z_reading_and_ignores_queue_filters(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -732,6 +732,19 @@ class CycleMonitoringTest extends TestCase
         $cancelledOrder = $this->createJobOrder($branch, $hiddenCustomer, 'JO-USAGE-CANCELLED');
         $cancelledOrder->update(['status' => 'cancelled']);
 
+        \App\Models\ZReading::query()->create([
+            'branch_id' => $branch->id,
+            'reading_number' => 'ZR-MACHINE-BASELINE',
+            'business_date' => '2026-06-09',
+            'machine_counters' => [
+                1 => [
+                    'wash' => ['beginning' => 95, 'ending' => 100, 'total' => 5],
+                    'dry' => ['beginning' => 195, 'ending' => 200, 'total' => 5],
+                ],
+            ],
+            'signature_name' => 'Test User',
+        ]);
+
         foreach ([$visibleOrder, $hiddenOrder, $cancelledOrder] as $index => $order) {
             CycleRecord::query()->create([
                 'job_order_id' => $order->id,
@@ -739,8 +752,8 @@ class CycleMonitoringTest extends TestCase
                 'cycle_type' => 'wash',
                 'machine_number' => 1,
                 'cycle_number' => 1,
-                'started_at' => $index === 0 ? '2026-06-10 09:00:00' : '2026-05-10 09:00:00',
-                'ended_at' => $index === 0 ? '2026-06-10 10:00:00' : '2026-05-10 10:00:00',
+                'started_at' => \Illuminate\Support\Carbon::parse('2026-06-10 09:00:00')->addDays($index),
+                'ended_at' => \Illuminate\Support\Carbon::parse('2026-06-10 10:00:00')->addDays($index),
             ]);
         }
 
@@ -756,11 +769,11 @@ class CycleMonitoringTest extends TestCase
             ->assertDontSee('JO-USAGE-HIDDEN')
             ->assertSeeInOrder([
                 'Wash #1',
-                '>2</p>',
-                'Total washing cycles',
+                '>0102</p>',
+                'Current washer reading',
             ], false)
-            ->assertSee('Cumulative usage since the first recorded cycle')
-            ->assertDontSee('Usage counts by cycle date only');
+            ->assertSee('Latest Z Reading plus cycles recorded afterward')
+            ->assertDontSee('Cumulative usage since the first recorded cycle');
     }
 
     public function test_cycle_monitoring_keeps_large_lists_and_history_bounded(): void

@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\CycleRecord;
 use App\Models\JobOrder;
+use App\Models\ZReading;
 use App\Support\Activity;
 use App\Support\SmsNotifier;
 use Illuminate\Http\Request;
@@ -16,6 +17,8 @@ use Illuminate\Validation\Rule;
 
 class CycleController extends Controller
 {
+    private const COUNTER_MODULUS = 10000;
+
     private const CYCLE_HISTORY_LIMIT = 5;
 
     private const FILTER_STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
@@ -208,13 +211,35 @@ class CycleController extends Controller
             )
             ->all() : [];
 
-        $machineUsageByBranch = $hasMachineOverview ? DB::table('cycle_records')
+        $latestZReadingDates = DB::table('z_readings')
+            ->selectRaw('branch_id, MAX(business_date) as business_date')
+            ->whereIn('branch_id', $machineOverviewBranchIds)
+            ->groupBy('branch_id');
+        $latestZReadingsByBranch = $hasMachineOverview ? ZReading::query()
+            ->joinSub($latestZReadingDates, 'latest_z_readings', fn ($join) => $join
+                ->on('latest_z_readings.branch_id', '=', 'z_readings.branch_id')
+                ->on('latest_z_readings.business_date', '=', 'z_readings.business_date'))
+            ->select('z_readings.*')
+            ->get()
+            ->keyBy('branch_id') : collect();
+
+        $machineCycleIncrementsByBranch = $hasMachineOverview ? DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
             ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
-            ->whereIn(DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'), $machineOverviewBranchIds)
+            ->where(function ($query) use ($machineOverviewBranchIds, $latestZReadingsByBranch) {
+                foreach ($machineOverviewBranchIds as $branchId) {
+                    $query->orWhere(function ($query) use ($branchId, $latestZReadingsByBranch) {
+                        $query->whereRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) = ?', [$branchId]);
+
+                        if ($latestZReading = $latestZReadingsByBranch->get($branchId)) {
+                            $query->whereDate('cycle_records.started_at', '>', $latestZReading->business_date->toDateString());
+                        }
+                    });
+                }
+            })
             ->groupByRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id), cycle_records.machine_number, cycle_records.cycle_type')
             ->get([
                 DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) as operating_branch_id'),
@@ -232,6 +257,24 @@ class CycleController extends Controller
                 ->all())
             ->all() : [];
 
+        $machineCounterReadingsByBranch = $machineOverviewBranches
+            ->mapWithKeys(function (Branch $branch) use ($latestZReadingsByBranch, $machineCycleIncrementsByBranch) {
+                $latestCounters = $latestZReadingsByBranch->get($branch->id)?->machine_counters ?? [];
+                $increments = $machineCycleIncrementsByBranch[$branch->id] ?? [];
+                $machineReadings = [];
+
+                for ($machine = 1; $machine <= (int) $branch->machine_count; $machine++) {
+                    foreach (['wash', 'dry'] as $type) {
+                        $lastEnding = (int) data_get($latestCounters, "{$machine}.{$type}.ending", 0);
+                        $increment = (int) data_get($increments, "{$machine}.{$type}", 0);
+                        $machineReadings[$machine][$type] = ($lastEnding + $increment) % self::COUNTER_MODULUS;
+                    }
+                }
+
+                return [$branch->id => $machineReadings];
+            })
+            ->all();
+
         return view('admin.cycles.index', [
             'activeMachinesByBranch' => $activeMachinesByBranch,
             'branches' => $branches,
@@ -240,7 +283,7 @@ class CycleController extends Controller
             'orders' => $orders,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
-            'machineUsageByBranch' => $machineUsageByBranch,
+            'machineCounterReadingsByBranch' => $machineCounterReadingsByBranch,
             'machineOverviewBranches' => $machineOverviewBranches,
             'selectedBranchId' => $selectedBranchId,
             'selectedCustomerId' => $selectedCustomerId,
