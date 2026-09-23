@@ -34,6 +34,16 @@ class HistoricalZReadingSeederTest extends TestCase
         foreach ($history['branches'] as $branch) {
             $previous = null;
             foreach ($branch['readings'] as $reading) {
+                $declaredCash = collect($reading['cash_count'])
+                    ->map(fn (int $quantity, string $denomination) => $quantity * (float) $denomination)
+                    ->sum();
+                $this->assertEqualsWithDelta(
+                    $reading['expected_cash_drawer_amount'],
+                    $declaredCash,
+                    0.001,
+                    'The seeded cash denominations must equal the expected cash drawer.'
+                );
+
                 if ($previous !== null) {
                     foreach ($reading['machine_counters'] as $machine => $types) {
                         foreach (['wash', 'dry'] as $type) {

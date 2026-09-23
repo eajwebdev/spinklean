@@ -80,7 +80,7 @@ class HistoricalZReadingSeeder extends Seeder
                         [
                             'prepared_by' => null,
                             'reading_number' => 'ZR-'.$branch->code.'-'.str_replace('-', '', $reading['business_date']).'-HIST',
-                            'cash_count' => json_encode($this->emptyCashCount(), JSON_THROW_ON_ERROR),
+                            'cash_count' => json_encode($reading['cash_count'], JSON_THROW_ON_ERROR),
                             'payment_breakdown' => json_encode($reading['payment_breakdown'], JSON_THROW_ON_ERROR),
                             'expense_breakdown' => json_encode($reading['expense_breakdown'], JSON_THROW_ON_ERROR),
                             'machine_counters' => json_encode($reading['machine_counters'], JSON_THROW_ON_ERROR),
@@ -215,6 +215,7 @@ class HistoricalZReadingSeeder extends Seeder
 
                 $readings[] = [
                     'business_date' => $businessDate,
+                    'cash_count' => $this->cashCountForAmount($finance['expected_cash_drawer'], $branchCode, $businessDate),
                     'payment_breakdown' => $finance['payment_breakdown'],
                     'expense_breakdown' => $finance['expense_breakdown'],
                     'machine_counters' => $machineCounters,
@@ -510,19 +511,37 @@ class HistoricalZReadingSeeder extends Seeder
         return $values;
     }
 
-    private function emptyCashCount(): array
+    private function cashCountForAmount(float $amount, string $branchCode, string $businessDate): array
     {
-        return [
-            '1000' => 0,
-            '500' => 0,
-            '200' => 0,
-            '100' => 0,
-            '50' => 0,
-            '20' => 0,
-            '10' => 0,
-            '5' => 0,
-            '1' => 0,
-            '0.25' => 0,
+        $denominations = [
+            '1000' => 100000,
+            '500' => 50000,
+            '200' => 20000,
+            '100' => 10000,
+            '50' => 5000,
+            '20' => 2000,
+            '10' => 1000,
+            '5' => 500,
+            '1' => 100,
+            '0.25' => 25,
         ];
+
+        $remainingCents = (int) round($amount * 100);
+        if ($remainingCents < 0 || $remainingCents % 25 !== 0) {
+            throw new RuntimeException(sprintf(
+                '%s on %s has an expected cash drawer of %.2f, which cannot be represented by the available cash denominations.',
+                $branchCode,
+                $businessDate,
+                $amount
+            ));
+        }
+
+        $cashCount = [];
+        foreach ($denominations as $label => $denominationCents) {
+            $cashCount[$label] = intdiv($remainingCents, $denominationCents);
+            $remainingCents %= $denominationCents;
+        }
+
+        return $cashCount;
     }
 }
