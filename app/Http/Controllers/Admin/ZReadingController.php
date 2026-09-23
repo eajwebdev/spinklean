@@ -3,10 +3,9 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Models\BranchExpense;
 use App\Models\Branch;
+use App\Models\BranchExpense;
 use App\Models\InventoryMovement;
-use App\Support\FinancialReconciliation;
 use App\Models\JobOrder;
 use App\Models\JobOrderItem;
 use App\Models\LaundryServiceCategory;
@@ -15,6 +14,7 @@ use App\Models\Payment;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\ZReading;
+use App\Support\FinancialReconciliation;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -22,6 +22,8 @@ use Illuminate\Support\Facades\DB;
 
 class ZReadingController extends Controller
 {
+    private const COUNTER_MODULUS = 10000;
+
     private const DENOMINATIONS = [
         '1000' => 'PHP 1,000',
         '500' => 'PHP 500',
@@ -342,6 +344,7 @@ class ZReadingController extends Controller
         $machineCycles = DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
             ->whereRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) = ?', [$branchId])
@@ -377,10 +380,10 @@ class ZReadingController extends Controller
             'payments' => $order->payments
                 ->whereIn('payment_type', ['cash', 'gcash', 'bank'])
                 ->map(fn (Payment $payment) => [
-                'type' => $payment->payment_type,
-                'amount' => round((float) $payment->amount, 2),
-                'reference_no' => $payment->reference_no,
-            ])->values()->all(),
+                    'type' => $payment->payment_type,
+                    'amount' => round((float) $payment->amount, 2),
+                    'reference_no' => $payment->reference_no,
+                ])->values()->all(),
         ])->values()->all();
 
         return [
@@ -553,7 +556,7 @@ class ZReadingController extends Controller
                 foreach (['wash', 'dry'] as $type) {
                     $beginning = (int) (data_get($previousCounters, "{$machine}.{$type}.ending") ?? 0);
                     $total = (int) data_get($cycleCounts, "{$machine}.{$type}", 0);
-                    $ending = $beginning + $total;
+                    $ending = ($beginning + $total) % self::COUNTER_MODULUS;
 
                     $types[$type] = [
                         'beginning' => $beginning,
@@ -595,9 +598,14 @@ class ZReadingController extends Controller
                         'beginning' => is_numeric($beginning) ? (int) $beginning : null,
                         'ending' => is_numeric($ending) ? (int) $ending : null,
                     ];
-                    $normalized[$type]['total'] = $normalized[$type]['beginning'] !== null && $normalized[$type]['ending'] !== null
-                        ? max(0, $normalized[$type]['ending'] - $normalized[$type]['beginning'])
-                        : null;
+                    if ($normalized[$type]['beginning'] !== null && $normalized[$type]['ending'] !== null) {
+                        $difference = $normalized[$type]['ending'] - $normalized[$type]['beginning'];
+                        $normalized[$type]['total'] = $difference >= 0
+                            ? $difference
+                            : self::COUNTER_MODULUS + $difference;
+                    } else {
+                        $normalized[$type]['total'] = null;
+                    }
                 }
 
                 return [$machineNumber => $normalized];

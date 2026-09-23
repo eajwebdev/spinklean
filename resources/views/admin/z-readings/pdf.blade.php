@@ -213,8 +213,8 @@
                 @endphp
                 <table class="machine">
                     <tr><th colspan="2">Wash {{ $machine }}</th></tr>
-                    <tr><td>Wash Beginning</td><td class="right">{{ $counter['beginning'] ?? '' }}</td></tr>
-                    <tr><td>Wash Ending</td><td class="right">{{ $counter['ending'] ?? '' }}</td></tr>
+                    <tr><td>Wash Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
+                    <tr><td>Wash Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Wash Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
                 </table>
             @endfor
@@ -227,8 +227,8 @@
                 @endphp
                 <table class="machine">
                     <tr><th colspan="2">Dry {{ $machine }}</th></tr>
-                    <tr><td>Dry Beginning</td><td class="right">{{ $counter['beginning'] ?? '' }}</td></tr>
-                    <tr><td>Dry Ending</td><td class="right">{{ $counter['ending'] ?? '' }}</td></tr>
+                    <tr><td>Dry Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
+                    <tr><td>Dry Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Dry Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
                 </table>
             @endfor

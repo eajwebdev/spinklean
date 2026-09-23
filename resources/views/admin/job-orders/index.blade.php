@@ -176,9 +176,11 @@
                             <a href="{{ route('admin.job-orders.show', $order) }}" title="View" aria-label="View job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="eye" class="h-4 w-4"></span>
                             </a>
-                            <a href="{{ route('admin.job-orders.edit', $order) }}" title="Edit" aria-label="Edit job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
-                                <span data-lucide="settings" class="h-4 w-4"></span>
-                            </a>
+                            @if($order->status !== 'cancelled')
+                                <a href="{{ route('admin.job-orders.edit', $order) }}" title="Edit" aria-label="Edit job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                                    <span data-lucide="settings" class="h-4 w-4"></span>
+                                </a>
+                            @endif
                             <button type="button" @click="paymentOpen = {{ $order->id }}" title="Payment history" aria-label="View payment history" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="payments" class="h-4 w-4"></span>
                             </button>
@@ -207,7 +209,7 @@
                                     <span data-lucide="x" class="h-4 w-4"></span>
                                 </button>
                             @endunless
-                            @if(auth()->user()?->role === 'super_admin')
+                            @if(auth()->user()?->isAdmin())
                                 <form method="POST" action="{{ route('admin.job-orders.destroy', $order) }}" class="inline">
                                     @csrf
                                     @method('DELETE')

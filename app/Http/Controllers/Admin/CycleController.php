@@ -179,6 +179,7 @@ class CycleController extends Controller
             ->join('customers', 'customers.id', '=', 'job_orders.customer_id')
             ->whereNull('cycle_records.ended_at')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereNotNull('cycle_records.machine_number')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereIn(DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'), $machineOverviewBranchIds)
@@ -189,7 +190,7 @@ class CycleController extends Controller
                 'job_orders.job_order_number',
                 'job_orders.is_rush',
                 'customers.name as customer_name',
-                DB::raw('(SELECT COUNT(*) FROM job_orders AS customer_orders WHERE customer_orders.customer_id = customers.id AND customer_orders.deleted_at IS NULL) as customer_orders_count'),
+                DB::raw("(SELECT COUNT(*) FROM job_orders AS customer_orders WHERE customer_orders.customer_id = customers.id AND customer_orders.deleted_at IS NULL AND customer_orders.status != 'cancelled') as customer_orders_count"),
             ])
             ->groupBy('operating_branch_id')
             ->map(fn ($cycles) => $cycles
@@ -212,6 +213,7 @@ class CycleController extends Controller
         $machineActivityByBranch = $hasMachineOverview ? DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
             ->where('cycle_records.started_at', '>=', Carbon::parse($activityDateFrom)->startOfDay())
@@ -372,7 +374,7 @@ class CycleController extends Controller
 
         $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
         $machineCount = (int) ($processingBranch?->machine_count ?? 0);
-        
+
         // For wash/dry cycles, require at least one machine
         if (in_array($validated['cycle_type'], ['wash', 'dry'], true) && $machineCount > 0 && empty($validated['machine_numbers'])) {
             return back()->withErrors([
@@ -412,7 +414,7 @@ class CycleController extends Controller
                     $conflictingMachines[(int) $machineNumber] = $conflictingCycle;
                 }
             }
-            
+
             if (! empty($conflictingMachines)) {
                 $machineLabel = $validated['cycle_type'] === 'wash' ? 'Wash' : 'Dry';
                 if (count($conflictingMachines) === 1) {
@@ -426,6 +428,7 @@ class CycleController extends Controller
                 }
 
                 $machines = implode(', ', array_map(fn ($m) => "#{$m}", array_keys($conflictingMachines)));
+
                 return back()->withErrors([
                     'machine_number' => "{$machineLabel} machine(s) {$machines} are currently in use.",
                     'machine_numbers' => "{$machineLabel} machine(s) {$machines} are currently in use.",
@@ -475,7 +478,7 @@ class CycleController extends Controller
             'released_at' => null,
         ]);
 
-        $machineStr = ! empty($machineNumbers) ? ' on machine(s) #' . implode(', #', $machineNumbers) : '';
+        $machineStr = ! empty($machineNumbers) ? ' on machine(s) #'.implode(', #', $machineNumbers) : '';
         Activity::log($request, 'cycle_started', $createdCycles[0] ?? null, [
             'job_order_number' => $jobOrder->job_order_number,
             'cycle_type' => $validated['cycle_type'],
@@ -483,7 +486,7 @@ class CycleController extends Controller
             'cycle_number' => $cycleNumber,
         ], $jobOrder->branch_id);
 
-        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started' . $machineStr . '.');
+        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started'.$machineStr.'.');
     }
 
     public function endCycle(Request $request, CycleRecord $cycle)

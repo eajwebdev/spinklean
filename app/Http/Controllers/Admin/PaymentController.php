@@ -4,14 +4,18 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
+use App\Models\CustomerLedger;
 use App\Models\Payment;
+use App\Support\Activity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 
 class PaymentController extends Controller
 {
     private const PAYMENT_TYPES = ['cash', 'gcash', 'bank', 'unpaid', 'po', 'monthly_billing'];
+
     private const UI_PAYMENT_TYPES = ['cash', 'gcash', 'unpaid', 'po'];
 
     public function index(Request $request)
@@ -131,9 +135,71 @@ class PaymentController extends Controller
         ]);
     }
 
+    public function destroy(Request $request, Payment $payment)
+    {
+        abort_unless($request->user()?->isAdmin(), 403);
+
+        DB::transaction(function () use ($request, $payment): void {
+            $payment = Payment::withoutGlobalScope('financially_active')
+                ->with('jobOrder')
+                ->lockForUpdate()
+                ->findOrFail($payment->id);
+            $jobOrder = $payment->jobOrder;
+            $snapshot = [
+                'payment_number' => $payment->payment_number,
+                'job_order_id' => $payment->job_order_id,
+                'job_order_number' => $jobOrder?->job_order_number,
+                'customer_id' => $payment->customer_id,
+                'payment_type' => $payment->payment_type,
+                'amount' => (float) $payment->amount,
+                'paid_at' => $payment->paid_at?->toDateTimeString(),
+            ];
+
+            CustomerLedger::query()->where('payment_id', $payment->id)->delete();
+            $payment->delete();
+
+            if ($jobOrder) {
+                $paidAmount = (float) Payment::withoutGlobalScope('financially_active')
+                    ->where('job_order_id', $jobOrder->id)
+                    ->sum('amount');
+
+                $jobOrder->update([
+                    'paid_amount' => $paidAmount,
+                    'balance' => max((float) $jobOrder->total - $paidAmount, 0),
+                ]);
+            }
+
+            if ($payment->customer_id) {
+                $this->recalculateCustomerLedger((int) $payment->customer_id);
+            }
+
+            Activity::log($request, 'payment_deleted', $payment, $snapshot, $payment->branch_id);
+        });
+
+        return back()->with('success', 'Payment deleted successfully. The job order balance and customer ledger were recalculated.');
+    }
+
     private function canChooseBranch($user): bool
     {
         return $user->isSuperAdmin() || $user->role === 'admin';
+    }
+
+    private function recalculateCustomerLedger(int $customerId): void
+    {
+        $runningBalance = 0.0;
+
+        CustomerLedger::query()
+            ->where('customer_id', $customerId)
+            ->orderBy('created_at')
+            ->orderBy('id')
+            ->get()
+            ->each(function (CustomerLedger $ledger) use (&$runningBalance): void {
+                $amount = (float) $ledger->amount;
+                $runningBalance += $ledger->entry_type === 'credit' ? -$amount : $amount;
+                $runningBalance = max($runningBalance, 0);
+
+                $ledger->update(['running_balance' => $runningBalance]);
+            });
     }
 
     private function filteredPaymentQuery(Request $request, ?int $branchId, string $branchColumn)

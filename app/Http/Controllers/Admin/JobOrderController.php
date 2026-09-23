@@ -22,6 +22,7 @@ use App\Support\SmsNotifier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -179,6 +180,7 @@ class JobOrderController extends Controller
     public function edit(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeJobOrder($request, $jobOrder);
+        abort_if($jobOrder->status === 'cancelled', 422, 'Cancelled job orders cannot be edited.');
 
         $jobOrder->load(['branch', 'processingBranch', 'customer', 'items.service', 'payments']);
         $user = $request->user();
@@ -263,7 +265,7 @@ class JobOrderController extends Controller
             'selectedCustomerId' => $selectedCustomerId,
             'jobOrder' => $jobOrder,
             'initialItems' => $initialItems,
-            'statuses' => self::STATUSES,
+            'statuses' => array_values(array_filter(self::STATUSES, fn ($status) => $status !== 'cancelled')),
         ]);
     }
 
@@ -449,6 +451,7 @@ class JobOrderController extends Controller
     public function update(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeJobOrder($request, $jobOrder);
+        abort_if($jobOrder->status === 'cancelled', 422, 'Cancelled job orders cannot be edited.');
 
         $validated = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
@@ -460,7 +463,7 @@ class JobOrderController extends Controller
             'items.*.quantity' => ['required', 'numeric', 'min:0.01'],
             'items.*.unit_price' => ['required', 'numeric', 'min:0'],
             'discount' => ['nullable', 'numeric', 'min:0'],
-            'status' => ['required', Rule::in(self::STATUSES)],
+            'status' => ['required', Rule::in(array_values(array_filter(self::STATUSES, fn ($status) => $status !== 'cancelled')))],
             'transaction_type' => ['nullable', Rule::in(['walk_in', 'delivery'])],
             'is_rush' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string'],
@@ -567,7 +570,7 @@ class JobOrderController extends Controller
                 $jobOrder->update(['inventory_deducted_at' => null]);
             }
 
-            Payment::query()
+            Payment::withoutGlobalScope('financially_active')
                 ->where('job_order_id', $jobOrder->id)
                 ->update([
                     'customer_id' => $jobOrder->customer_id,
@@ -645,28 +648,53 @@ class JobOrderController extends Controller
 
         abort_if(in_array($jobOrder->status, ['completed', 'cancelled'], true), 422, 'Completed or cancelled job orders cannot be cancelled.');
 
-        $jobOrder->endActiveCycles();
+        DB::transaction(function () use ($request, $jobOrder): void {
+            $paymentIds = Payment::withoutGlobalScope('financially_active')
+                ->where('job_order_id', $jobOrder->id)
+                ->pluck('id');
 
-        $jobOrder->update([
-            'status' => 'cancelled',
-            'completed_at' => null,
-        ]);
+            $jobOrder->endActiveCycles();
+            $this->restoreInventoryForOrder($jobOrder, $request->user()?->id);
+            $this->deleteInventoryMovementsForOrder($jobOrder);
 
-        Activity::log($request, 'job_order_cancelled', $jobOrder, [
-            'job_order_number' => $jobOrder->job_order_number,
-        ], $jobOrder->branch_id);
+            CustomerLedger::withoutGlobalScope('financially_active')
+                ->where('job_order_id', $jobOrder->id)
+                ->orWhereIn('payment_id', $paymentIds)
+                ->delete();
+
+            $jobOrder->update([
+                'status' => 'cancelled',
+                'balance' => 0,
+                'completed_at' => null,
+                'inventory_deducted_at' => null,
+            ]);
+
+            $this->recalculateCustomerLedger((int) $jobOrder->customer_id);
+
+            Activity::log($request, 'job_order_cancelled', $jobOrder, [
+                'job_order_number' => $jobOrder->job_order_number,
+                'excluded_payments_count' => $paymentIds->count(),
+                'original_total' => (float) $jobOrder->total,
+            ], $jobOrder->branch_id);
+        });
 
         return back()->with('success', 'Job order cancelled successfully.');
     }
 
     public function destroy(Request $request, JobOrder $jobOrder)
     {
-        abort_unless($request->user()?->role === 'super_admin', 403);
+        abort_unless($request->user()?->isAdmin(), 403);
 
         DB::transaction(function () use ($request, $jobOrder) {
-            $jobOrder->loadMissing(['items', 'payments', 'poTransaction', 'cycles']);
+            $jobOrder->loadMissing(['items', 'cycles']);
+            $payments = Payment::withoutGlobalScope('financially_active')
+                ->where('job_order_id', $jobOrder->id)
+                ->get();
+            $poTransaction = PoTransaction::withoutGlobalScope('financially_active')
+                ->where('job_order_id', $jobOrder->id)
+                ->first();
 
-            $paymentIds = $jobOrder->payments->pluck('id')->all();
+            $paymentIds = $payments->pluck('id')->all();
             $snapshot = [
                 'job_order_number' => $jobOrder->job_order_number,
                 'customer_id' => $jobOrder->customer_id,
@@ -676,21 +704,21 @@ class JobOrderController extends Controller
                 'paid_amount' => (float) $jobOrder->paid_amount,
                 'balance' => (float) $jobOrder->balance,
                 'items_count' => $jobOrder->items->count(),
-                'payments_count' => $jobOrder->payments->count(),
+                'payments_count' => $payments->count(),
                 'cycles_count' => $jobOrder->cycles->count(),
-                'had_po_transaction' => (bool) $jobOrder->poTransaction,
+                'had_po_transaction' => (bool) $poTransaction,
             ];
 
             $this->restoreInventoryForOrder($jobOrder, $request->user()?->id);
             $this->deleteInventoryMovementsForOrder($jobOrder);
 
-            CustomerLedger::query()
+            CustomerLedger::withoutGlobalScope('financially_active')
                 ->where('job_order_id', $jobOrder->id)
                 ->orWhereIn('payment_id', $paymentIds)
                 ->delete();
 
-            $jobOrder->poTransaction()?->delete();
-            $jobOrder->payments()->delete();
+            $poTransaction?->delete();
+            Payment::withoutGlobalScope('financially_active')->where('job_order_id', $jobOrder->id)->delete();
             $jobOrder->cycles()->delete();
             $jobOrder->items()->delete();
             $jobOrder->delete();
@@ -743,11 +771,6 @@ class JobOrderController extends Controller
             ->value('code') ?: 'BR'.$branchId;
 
         $prefix = $branchPrefix ?: $globalPrefix;
-        $count = JobOrder::query()
-            ->where('branch_id', $branchId)
-            ->whereDate('created_at', today())
-            ->count() + 1;
-
         $prefixParts = [trim((string) $prefix)];
         if (strcasecmp(trim((string) $prefix), trim((string) $branchCode)) !== 0) {
             $prefixParts[] = trim((string) $branchCode);
@@ -756,13 +779,27 @@ class JobOrderController extends Controller
         $prefixText = collect($prefixParts)
             ->filter()
             ->implode('-');
+        $numberPrefix = $prefixText.'-'.now()->format('Ymd').'-';
+        $lastNumber = JobOrder::withTrashed()
+            ->where('branch_id', $branchId)
+            ->where('job_order_number', 'like', $numberPrefix.'%')
+            ->orderByDesc('job_order_number')
+            ->value('job_order_number');
+        $sequence = $lastNumber ? ((int) Str::afterLast($lastNumber, '-')) + 1 : 1;
 
-        return $prefixText.'-'.now()->format('Ymd').'-'.str_pad((string) $count, 4, '0', STR_PAD_LEFT);
+        return $numberPrefix.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
     }
 
     private function nextPaymentNumber(): string
     {
-        return 'PAY-'.now()->format('Ymd').'-'.str_pad((string) (Payment::whereDate('created_at', today())->count() + 1), 4, '0', STR_PAD_LEFT);
+        $prefix = 'PAY-'.now()->format('Ymd').'-';
+        $lastNumber = Payment::withoutGlobalScope('financially_active')
+            ->where('payment_number', 'like', $prefix.'%')
+            ->orderByDesc('payment_number')
+            ->value('payment_number');
+        $sequence = $lastNumber ? ((int) Str::afterLast($lastNumber, '-')) + 1 : 1;
+
+        return $prefix.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
     }
 
     private function authorizeJobOrder(Request $request, JobOrder $jobOrder): void

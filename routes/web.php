@@ -25,8 +25,8 @@ use App\Http\Controllers\Admin\SubscriptionBillingController;
 use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\ZReadingController;
-use App\Http\Controllers\PublicUploadController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\PublicUploadController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/pay', function () {
@@ -142,6 +142,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         Route::middleware('menu.access:payments')->group(function () {
             Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
             Route::patch('/payments/{payment}', [PaymentController::class, 'update'])->name('payments.update');
+            Route::delete('/payments/{payment}', [PaymentController::class, 'destroy'])->name('payments.destroy');
         });
         Route::middleware('menu.access:inventory')->group(function () {
             Route::resource('inventory', InventoryController::class)->only(['index', 'store', 'update', 'destroy']);

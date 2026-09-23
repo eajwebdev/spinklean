@@ -3,23 +3,23 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AccountsPayable;
+use App\Models\AccountsPayablePayment;
 use App\Models\ActivityLog;
 use App\Models\Branch;
 use App\Models\BranchExpense;
-use App\Models\CustomerLedger;
 use App\Models\Customer;
+use App\Models\CustomerLedger;
 use App\Models\InventoryMovement;
 use App\Models\JobOrder;
 use App\Models\JobOrderItem;
 use App\Models\LaundryServiceCategory;
+use App\Models\MoneyMovement;
 use App\Models\Payment;
+use App\Models\SmsLog;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\ZReading;
-use App\Models\AccountsPayable;
-use App\Models\AccountsPayablePayment;
-use App\Models\MoneyMovement;
-use App\Models\SmsLog;
 use App\Support\FinancialReconciliation;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -114,6 +114,7 @@ class ReportController extends Controller
         if ($customer) {
             $orders = JobOrder::query()
                 ->with(['branch:id,name', 'items:id,job_order_id,description,laundry_service_id,quantity,unit_price,total', 'items.service:id,name'])
+                ->financiallyActive()
                 ->where('customer_id', $customer->id)
                 ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
                 ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
@@ -240,6 +241,7 @@ class ReportController extends Controller
         $machineCycles = DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
             ->when($branchId, fn ($query) => $query->whereRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) = ?', [$branchId]))
@@ -487,6 +489,9 @@ class ReportController extends Controller
 
         $customerLedger = CustomerLedger::query()
             ->with(['customer', 'branch'])
+            ->where(fn ($query) => $query
+                ->whereNull('job_order_id')
+                ->orWhereHas('jobOrder', fn ($query) => $query->financiallyActive()))
             ->whereDate('created_at', '>=', $dateFrom)
             ->whereDate('created_at', '<=', $dateTo)
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
@@ -562,6 +567,7 @@ class ReportController extends Controller
             ->first();
 
         $jobOrderSummary = JobOrder::query()
+            ->financiallyActive()
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->whereDate('created_at', '>=', $dateFrom)
             ->whereDate('created_at', '<=', $dateTo)
@@ -727,6 +733,7 @@ class ReportController extends Controller
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->join('branches', 'branches.id', '=', DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'))
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
             ->when($branchId, fn ($query) => $query->whereRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) = ?', [$branchId]))

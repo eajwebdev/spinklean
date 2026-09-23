@@ -35,10 +35,14 @@
         money(value) {
             return Number(value || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         },
+        counter(value) {
+            return String(Math.trunc(Number(value || 0))).padStart(4, '0');
+        },
         cycleTotal(machine, type) {
             const values = this.machineCounters[machine]?.[type] || {};
             if (values.beginning === '' || values.ending === '' || values.beginning == null || values.ending == null) return 0;
-            return Math.max(0, Number(values.ending) - Number(values.beginning));
+            const difference = Number(values.ending) - Number(values.beginning);
+            return difference >= 0 ? difference : 10000 + difference;
         }
     }"
     class="space-y-4"
@@ -198,18 +202,15 @@
                                                 @if($field === 'beginning')
                                                     <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]" x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']">
                                                     <input
-                                                        x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']"
-                                                        type="number"
-                                                        min="0"
-                                                        step="1"
-                                                        inputmode="numeric"
+                                                        x-bind:value="counter(machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}'])"
+                                                        type="text"
                                                         disabled
                                                         class="mt-1 h-9 w-full rounded-md border border-border bg-smoke px-2 text-right text-sm font-semibold text-muted dark:border-gray-800 dark:bg-gray-950"
                                                         aria-label="{{ $fieldLabel }} {{ $label }} {{ $machine }}"
                                                     >
                                                 @else
                                                     <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]" x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']">
-                                                    <div class="mt-1 h-9 rounded-md border border-border bg-smoke px-2 py-2 text-right text-sm font-semibold dark:border-gray-800 dark:bg-gray-950" x-text="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']"></div>
+                                                    <div class="mt-1 h-9 rounded-md border border-border bg-smoke px-2 py-2 text-right text-sm font-semibold dark:border-gray-800 dark:bg-gray-950" x-text="counter(machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}'])"></div>
                                                 @endif
                                             </label>
                                         @endforeach

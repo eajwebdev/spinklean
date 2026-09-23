@@ -166,6 +166,9 @@
                         <th class="px-4 py-3 text-right">Amount</th>
                         <th class="px-4 py-3">Received By</th>
                         <th class="px-4 py-3">Remarks</th>
+                        @if(auth()->user()?->isAdmin())
+                            <th class="px-4 py-3 text-right">Actions</th>
+                        @endif
                     </tr>
                 </thead>
                 <tbody class="divide-y divide-border dark:divide-gray-800">
@@ -280,10 +283,21 @@
                             <td class="max-w-56 px-4 py-3">
                                 <p class="truncate text-muted" title="{{ $payment->remarks }}">{{ $payment->remarks ?: 'N/A' }}</p>
                             </td>
+                            @if(auth()->user()?->isAdmin())
+                                <td class="px-4 py-3 text-right">
+                                    <form method="POST" action="{{ route('admin.payments.destroy', $payment) }}" class="inline">
+                                        @csrf
+                                        @method('DELETE')
+                                        <button type="submit" x-on:click.prevent="Swal.fire({ title: 'Delete payment?', text: 'This will remove the payment and recalculate the job order balance and customer ledger.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', confirmButtonText: 'Delete' }).then((result) => { if (result.isConfirmed) $el.closest('form').submit(); })" title="Delete payment" aria-label="Delete payment {{ $payment->payment_number }}" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-700 hover:bg-red-50 dark:border-red-900/60 dark:text-red-300 dark:hover:bg-red-500/10">
+                                            <span data-lucide="trash" class="h-4 w-4"></span>
+                                        </button>
+                                    </form>
+                                </td>
+                            @endif
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="11" class="px-4 py-10 text-center text-muted">No payments found.</td>
+                            <td colspan="{{ auth()->user()?->isAdmin() ? 12 : 11 }}" class="px-4 py-10 text-center text-muted">No payments found.</td>
                         </tr>
                     @endforelse
                 </tbody>

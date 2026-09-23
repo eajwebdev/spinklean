@@ -32,8 +32,30 @@ class PoTransaction extends Model
         'paid_at' => 'datetime',
     ];
 
-    public function branch() { return $this->belongsTo(Branch::class); }
-    public function customer() { return $this->belongsTo(Customer::class); }
-    public function jobOrder() { return $this->belongsTo(JobOrder::class); }
-    public function payments() { return $this->hasMany(PoTransactionPayment::class); }
+    public function branch()
+    {
+        return $this->belongsTo(Branch::class);
+    }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
+    }
+
+    public function jobOrder()
+    {
+        return $this->belongsTo(JobOrder::class);
+    }
+
+    public function payments()
+    {
+        return $this->hasMany(PoTransactionPayment::class);
+    }
+
+    protected static function booted(): void
+    {
+        static::addGlobalScope('financially_active', function ($query): void {
+            $query->whereHas('jobOrder', fn ($query) => $query->financiallyActive());
+        });
+    }
 }

@@ -93,7 +93,7 @@ class FinancialReconciliation
         $unpaidBalance = round((float) JobOrder::query()
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->where('balance', '>', 0)
-            ->where('status', '!=', 'cancelled')
+            ->financiallyActive()
             ->regularReceivable()
             ->sum('balance'), 2);
 
