@@ -210,12 +210,16 @@
                 @php
                     $counter = data_get($reading->machine_counters, $machine.'.wash', []);
                     $systemCycles = (int) $machineCycles->where('machine_number', $machine)->where('cycle_type', 'wash')->sum('cycle_count');
+                    $cleanCycles = (int) data_get($counter, 'cleaning_cycles', 0);
                 @endphp
                 <table class="machine">
                     <tr><th colspan="2">Wash {{ $machine }}</th></tr>
                     <tr><td>Wash Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr><td>Wash Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Wash Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
+                    @if($cleanCycles > 0)
+                        <tr><td style="font-size:7pt; color:#2563eb;">Incl. Cleaning</td><td class="right" style="font-size:7pt; color:#2563eb;">+{{ $cleanCycles }}</td></tr>
+                    @endif
                 </table>
             @endfor
         </td>
@@ -224,12 +228,16 @@
                 @php
                     $counter = data_get($reading->machine_counters, $machine.'.dry', []);
                     $systemCycles = (int) $machineCycles->where('machine_number', $machine)->where('cycle_type', 'dry')->sum('cycle_count');
+                    $cleanCycles = (int) data_get($counter, 'cleaning_cycles', 0);
                 @endphp
                 <table class="machine">
                     <tr><th colspan="2">Dry {{ $machine }}</th></tr>
                     <tr><td>Dry Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr><td>Dry Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Dry Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
+                    @if($cleanCycles > 0)
+                        <tr><td style="font-size:7pt; color:#2563eb;">Incl. Cleaning</td><td class="right" style="font-size:7pt; color:#2563eb;">+{{ $cleanCycles }}</td></tr>
+                    @endif
                 </table>
             @endfor
         </td>
@@ -278,6 +286,37 @@
         </td>
     </tr>
 </table>
+
+@if(! empty($details['cleaning_task_records']))
+    <table style="margin-top:8px;">
+        <tr><th colspan="4">End-of-Day Machine Cleaning & Maintenance (Cycles Accounted in Reading)</th></tr>
+        <tr>
+            <th>Task Name</th>
+            <th>Cleaned Machines (+1 cycle each)</th>
+            <th>Completed By</th>
+            <th>Time</th>
+        </tr>
+        @foreach($details['cleaning_task_records'] as $cleanRecord)
+            <tr>
+                <td>{{ $cleanRecord['task_name'] }}</td>
+                <td>
+                    @php
+                        $mParts = [];
+                        if (!empty($cleanRecord['wash_machines'])) {
+                            $mParts[] = 'Wash ' . implode(', ', array_map(fn($m) => "#{$m}", $cleanRecord['wash_machines']));
+                        }
+                        if (!empty($cleanRecord['dry_machines'])) {
+                            $mParts[] = 'Dry ' . implode(', ', array_map(fn($m) => "#{$m}", $cleanRecord['dry_machines']));
+                        }
+                    @endphp
+                    {{ implode(' | ', $mParts) }}
+                </td>
+                <td>{{ $cleanRecord['completed_by'] }}</td>
+                <td>{{ $cleanRecord['completed_at'] ? \Illuminate\Support\Carbon::parse($cleanRecord['completed_at'])->format('h:i A') : '-' }}</td>
+            </tr>
+        @endforeach
+    </table>
+@endif
 
 @if(filled($reading->remarks))
     <table style="margin-top:14px;">

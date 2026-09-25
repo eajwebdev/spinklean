@@ -34,7 +34,10 @@ class DailyTaskController extends Controller
             ->orderBy('name')
             ->get();
 
-        return view('admin.daily-tasks.index', compact('branches', 'canChooseBranch', 'branchId', 'workDate', 'tasks'));
+        $branch = $branches->firstWhere('id', $branchId) ?: Branch::query()->find($branchId);
+        $machineCount = max(1, (int) $branch?->machine_count);
+
+        return view('admin.daily-tasks.index', compact('branches', 'canChooseBranch', 'branch', 'branchId', 'machineCount', 'workDate', 'tasks'));
     }
 
     public function complete(Request $request, DailyTask $task)
@@ -44,6 +47,11 @@ class DailyTaskController extends Controller
             'work_date' => ['required', 'date'],
             'photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096'],
             'remarks' => ['nullable', 'string', 'max:500'],
+            'machines' => ['nullable', 'array'],
+            'machines.wash' => ['nullable', 'array'],
+            'machines.wash.*' => ['integer', 'min:1', 'max:100'],
+            'machines.dry' => ['nullable', 'array'],
+            'machines.dry.*' => ['integer', 'min:1', 'max:100'],
         ]);
 
         if (! $request->user()->isAdmin()) {
@@ -51,6 +59,31 @@ class DailyTaskController extends Controller
         }
 
         abort_if($task->branch_id !== null && (int) $task->branch_id !== (int) $validated['branch_id'], 403);
+
+        $cleanedMachines = null;
+        if ($task->affectsMachineCounter()) {
+            $branch = Branch::query()->findOrFail($validated['branch_id']);
+            $maxMachines = max(1, (int) $branch->machine_count);
+
+            $washSelected = $task->affectsWash() ? array_values(array_unique(array_filter(
+                array_map('intval', (array) $request->input('machines.wash', [])),
+                fn ($m) => $m >= 1 && $m <= $maxMachines
+            ))) : [];
+
+            $drySelected = $task->affectsDry() ? array_values(array_unique(array_filter(
+                array_map('intval', (array) $request->input('machines.dry', [])),
+                fn ($m) => $m >= 1 && $m <= $maxMachines
+            ))) : [];
+
+            if (empty($washSelected) && empty($drySelected)) {
+                return back()->withErrors(['machines' => 'Please select at least one machine that was cleaned for this task.'])->withInput();
+            }
+
+            $cleanedMachines = [
+                'wash' => $washSelected,
+                'dry' => $drySelected,
+            ];
+        }
 
         $path = $request->file('photo')->store('daily-tasks', PublicUpload::DISK);
         $existing = DailyTaskCompletion::query()
@@ -65,10 +98,16 @@ class DailyTaskController extends Controller
 
         DailyTaskCompletion::updateOrCreate(
             ['daily_task_id' => $task->id, 'branch_id' => $validated['branch_id'], 'work_date' => $validated['work_date']],
-            ['completed_by' => $request->user()->id, 'photo_path' => $path, 'remarks' => $validated['remarks'] ?? null, 'completed_at' => now()]
+            [
+                'completed_by' => $request->user()->id,
+                'photo_path' => $path,
+                'remarks' => $validated['remarks'] ?? null,
+                'cleaned_machines' => $cleanedMachines,
+                'completed_at' => now(),
+            ]
         );
 
-        return back()->with('success', 'Daily task completed with photo proof.');
+        return back()->with('success', 'Daily task completed with photo proof' . ($cleanedMachines ? ' and recorded for machine Z Reading counter.' : '.'));
     }
 
 }

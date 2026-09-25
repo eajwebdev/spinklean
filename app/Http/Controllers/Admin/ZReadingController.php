@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\BranchExpense;
+use App\Models\DailyTaskCompletion;
 use App\Models\InventoryMovement;
 use App\Models\JobOrder;
 use App\Models\JobOrderItem;
@@ -162,7 +163,8 @@ class ZReadingController extends Controller
             (int) collect(array_keys($validated['machine_counters'] ?? []))->max()
         );
         $machineCounters = $this->normalizedMachineCounters(
-            $validated['machine_counters'] ?? $this->machineCountersForDate($branchId, $businessDate, $machineCount, $summary)
+            $validated['machine_counters'] ?? $this->machineCountersForDate($branchId, $businessDate, $machineCount, $summary),
+            $summary
         );
         $actualTotal = round($actualCash + $actualGcash + $actualBank, 2);
         $overShort = round($actualTotal - (float) $summary['expected_total_amount'], 2);
@@ -341,7 +343,7 @@ class ZReadingController extends Controller
             ->orderBy('id')
             ->get();
 
-        $machineCycles = DB::table('cycle_records')
+        $cycleRecords = DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
             ->where('job_orders.status', '!=', 'cancelled')
@@ -356,6 +358,76 @@ class ZReadingController extends Controller
                 'cycle_records.cycle_type',
                 DB::raw('COUNT(*) as cycle_count'),
             ]);
+
+        $cleaningCompletions = DailyTaskCompletion::query()
+            ->with(['task:id,name,affects_machine_counter', 'completer:id,name', 'employeeCompleter:id,name'])
+            ->where('branch_id', $branchId)
+            ->whereDate('work_date', $businessDate)
+            ->whereNotNull('cleaned_machines')
+            ->get();
+
+        $cleaningCycles = [
+            'wash' => [],
+            'dry' => [],
+        ];
+        $cleaningTaskRecords = [];
+
+        foreach ($cleaningCompletions as $completion) {
+            $washMachines = $completion->cleanedWashMachines();
+            $dryMachines = $completion->cleanedDryMachines();
+
+            if (empty($washMachines) && empty($dryMachines)) {
+                continue;
+            }
+
+            foreach ($washMachines as $m) {
+                $cleaningCycles['wash'][$m] = ($cleaningCycles['wash'][$m] ?? 0) + 1;
+            }
+            foreach ($dryMachines as $m) {
+                $cleaningCycles['dry'][$m] = ($cleaningCycles['dry'][$m] ?? 0) + 1;
+            }
+
+            $cleaningTaskRecords[] = [
+                'task_name' => $completion->task?->name ?? 'Daily Task',
+                'wash_machines' => $washMachines,
+                'dry_machines' => $dryMachines,
+                'completed_by' => $completion->completer?->name ?? $completion->employeeCompleter?->name ?? 'Staff',
+                'completed_at' => $completion->completed_at?->toDateTimeString(),
+            ];
+        }
+
+        $allMachineNumbers = collect($cycleRecords->pluck('machine_number'))
+            ->merge(array_keys($cleaningCycles['wash']))
+            ->merge(array_keys($cleaningCycles['dry']))
+            ->map(fn ($n) => (int) $n)
+            ->filter(fn ($n) => $n >= 1)
+            ->unique()
+            ->sort()
+            ->values();
+
+        $customerCycleMap = [];
+        foreach ($cycleRecords as $row) {
+            $customerCycleMap[(int) $row->machine_number][$row->cycle_type] = (int) $row->cycle_count;
+        }
+
+        $combinedMachineCycles = collect();
+        foreach ($allMachineNumbers as $mNum) {
+            foreach (['wash', 'dry'] as $cType) {
+                $custCount = (int) ($customerCycleMap[$mNum][$cType] ?? 0);
+                $cleanCount = (int) ($cleaningCycles[$cType][$mNum] ?? 0);
+                $totCount = $custCount + $cleanCount;
+
+                if ($totCount > 0) {
+                    $combinedMachineCycles->push((object) [
+                        'machine_number' => $mNum,
+                        'cycle_type' => $cType,
+                        'cycle_count' => $totCount,
+                        'customer_cycle_count' => $custCount,
+                        'cleaning_cycle_count' => $cleanCount,
+                    ]);
+                }
+            }
+        }
 
         $jobOrderItems = $jobOrders->map(fn (JobOrder $order) => [
             'job_order_number' => $order->job_order_number,
@@ -466,11 +538,15 @@ class ZReadingController extends Controller
                 'remarks' => $movement->remarks,
                 'recorded_by' => $movement->user?->name,
             ])->all(),
-            'machine_cycles' => $machineCycles->map(fn ($row) => [
+            'machine_cycles' => $combinedMachineCycles->map(fn ($row) => [
                 'machine_number' => (int) $row->machine_number,
                 'cycle_type' => $row->cycle_type,
                 'cycle_count' => (int) $row->cycle_count,
+                'customer_cycle_count' => (int) ($row->customer_cycle_count ?? $row->cycle_count),
+                'cleaning_cycle_count' => (int) ($row->cleaning_cycle_count ?? 0),
             ])->all(),
+            'cleaning_cycles' => $cleaningCycles,
+            'cleaning_task_records' => $cleaningTaskRecords,
             'transaction_count' => $jobOrders->count(),
             'first_job_order_number' => $jobOrders->first()?->job_order_number,
             'last_job_order_number' => $jobOrders->last()?->job_order_number,
@@ -549,19 +625,35 @@ class ZReadingController extends Controller
                 $row['cycle_type'] => (int) $row['cycle_count'],
             ])->all());
 
+        $customerCycleCounts = collect($summary['machine_cycles'] ?? [])
+            ->groupBy('machine_number')
+            ->map(fn ($rows) => collect($rows)->mapWithKeys(fn ($row) => [
+                $row['cycle_type'] => (int) ($row['customer_cycle_count'] ?? $row['cycle_count']),
+            ])->all());
+
+        $cleaningCycleCounts = collect($summary['machine_cycles'] ?? [])
+            ->groupBy('machine_number')
+            ->map(fn ($rows) => collect($rows)->mapWithKeys(fn ($row) => [
+                $row['cycle_type'] => (int) ($row['cleaning_cycle_count'] ?? 0),
+            ])->all());
+
         return collect(range(1, $machineCount))
-            ->mapWithKeys(function (int $machine) use ($previousCounters, $cycleCounts) {
+            ->mapWithKeys(function (int $machine) use ($previousCounters, $cycleCounts, $customerCycleCounts, $cleaningCycleCounts) {
                 $types = [];
 
                 foreach (['wash', 'dry'] as $type) {
                     $beginning = (int) (data_get($previousCounters, "{$machine}.{$type}.ending") ?? 0);
                     $total = (int) data_get($cycleCounts, "{$machine}.{$type}", 0);
                     $ending = ($beginning + $total) % self::COUNTER_MODULUS;
+                    $customerCycles = (int) data_get($customerCycleCounts, "{$machine}.{$type}", 0);
+                    $cleaningCycles = (int) data_get($cleaningCycleCounts, "{$machine}.{$type}", 0);
 
                     $types[$type] = [
                         'beginning' => $beginning,
                         'ending' => $ending,
                         'total' => $total,
+                        'customer_cycles' => $customerCycles,
+                        'cleaning_cycles' => $cleaningCycles,
                     ];
                 }
 
@@ -581,10 +673,16 @@ class ZReadingController extends Controller
         return round($total, 2);
     }
 
-    private function normalizedMachineCounters(array $counters): array
+    private function normalizedMachineCounters(array $counters, array $summary = []): array
     {
+        $cleaningCycleCounts = collect($summary['machine_cycles'] ?? [])
+            ->groupBy('machine_number')
+            ->map(fn ($rows) => collect($rows)->mapWithKeys(fn ($row) => [
+                $row['cycle_type'] => (int) ($row['cleaning_cycle_count'] ?? 0),
+            ])->all());
+
         return collect($counters)
-            ->mapWithKeys(function ($types, $machineNumber) {
+            ->mapWithKeys(function ($types, $machineNumber) use ($cleaningCycleCounts) {
                 $machineNumber = (int) $machineNumber;
                 if ($machineNumber < 1) {
                     return [];
@@ -594,17 +692,22 @@ class ZReadingController extends Controller
                 foreach (['wash', 'dry'] as $type) {
                     $beginning = data_get($types, "{$type}.beginning");
                     $ending = data_get($types, "{$type}.ending");
+                    $cleaning = data_get($types, "{$type}.cleaning_cycles") ?? data_get($cleaningCycleCounts, "{$machineNumber}.{$type}", 0);
                     $normalized[$type] = [
                         'beginning' => is_numeric($beginning) ? (int) $beginning : null,
                         'ending' => is_numeric($ending) ? (int) $ending : null,
+                        'cleaning_cycles' => (int) $cleaning,
                     ];
                     if ($normalized[$type]['beginning'] !== null && $normalized[$type]['ending'] !== null) {
                         $difference = $normalized[$type]['ending'] - $normalized[$type]['beginning'];
-                        $normalized[$type]['total'] = $difference >= 0
+                        $total = $difference >= 0
                             ? $difference
                             : self::COUNTER_MODULUS + $difference;
+                        $normalized[$type]['total'] = $total;
+                        $normalized[$type]['customer_cycles'] = max(0, $total - (int) $cleaning);
                     } else {
                         $normalized[$type]['total'] = null;
+                        $normalized[$type]['customer_cycles'] = null;
                     }
                 }
 

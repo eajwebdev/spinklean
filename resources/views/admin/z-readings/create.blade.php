@@ -130,19 +130,28 @@
                 <p class="text-xs text-muted">Workbook-style totals are summarized here; transaction, payment, expense, inventory, and machine details are included in the PDF.</p>
             </div>
             <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                @php
+                    $washCycleTotal = (int) collect($summary['machine_cycles'])->where('cycle_type', 'wash')->sum('cycle_count');
+                    $dryCycleTotal = (int) collect($summary['machine_cycles'])->where('cycle_type', 'dry')->sum('cycle_count');
+                    $washCleanTotal = (int) collect($summary['machine_cycles'])->where('cycle_type', 'wash')->sum('cleaning_cycle_count');
+                    $dryCleanTotal = (int) collect($summary['machine_cycles'])->where('cycle_type', 'dry')->sum('cleaning_cycle_count');
+                @endphp
                 @foreach([
-                    ['Job Orders', number_format((int) $summary['transaction_count'])],
-                    ['Total Sales', $currency.' '.number_format((float) $summary['daily_total_sales'], 2)],
-                    ['Current Payments', $currency.' '.number_format((float) $summary['current_sales_payment_total'], 2)],
-                    ['Previous Payments', $currency.' '.number_format((float) $summary['previous_payment_total'], 2)],
-                    ['Unpaid', $currency.' '.number_format((float) $summary['daily_unpaid_amount'], 2)],
-                    ['Expenses', $currency.' '.number_format((float) array_sum(array_column(data_get($summary, 'expense_breakdown.items', []), 'amount')), 2)],
-                    ['Wash Cycles', number_format((int) collect($summary['machine_cycles'])->where('cycle_type', 'wash')->sum('cycle_count'))],
-                    ['Dry Cycles', number_format((int) collect($summary['machine_cycles'])->where('cycle_type', 'dry')->sum('cycle_count'))],
-                ] as [$label, $value])
+                    ['Job Orders', number_format((int) $summary['transaction_count']), null],
+                    ['Total Sales', $currency.' '.number_format((float) $summary['daily_total_sales'], 2), null],
+                    ['Current Payments', $currency.' '.number_format((float) $summary['current_sales_payment_total'], 2), null],
+                    ['Previous Payments', $currency.' '.number_format((float) $summary['previous_payment_total'], 2), null],
+                    ['Unpaid', $currency.' '.number_format((float) $summary['daily_unpaid_amount'], 2), null],
+                    ['Expenses', $currency.' '.number_format((float) array_sum(array_column(data_get($summary, 'expense_breakdown.items', []), 'amount')), 2), null],
+                    ['Wash Cycles', number_format($washCycleTotal), $washCleanTotal > 0 ? "(".($washCycleTotal - $washCleanTotal)." orders + {$washCleanTotal} cleaning)" : null],
+                    ['Dry Cycles', number_format($dryCycleTotal), $dryCleanTotal > 0 ? "(".($dryCycleTotal - $dryCleanTotal)." orders + {$dryCleanTotal} cleaning)" : null],
+                ] as [$label, $value, $subValue])
                     <div class="rounded-md bg-smoke p-2.5 dark:bg-gray-950">
                         <p class="text-[11px] font-medium uppercase tracking-wide text-muted">{{ $label }}</p>
                         <p class="mt-1 text-sm font-semibold">{{ $value }}</p>
+                        @if($subValue)
+                            <p class="text-[10px] text-muted">{{ $subValue }}</p>
+                        @endif
                     </div>
                 @endforeach
             </div>
@@ -188,11 +197,36 @@
                 <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                     <div class="mb-3">
                         <h2 class="text-base font-semibold">Machine Counter Readings</h2>
-                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending; ending is auto-computed from detected cycles for the selected date.</p>
+                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending; ending is auto-computed from detected cycles and end-of-day cleaning tasks for the selected date.</p>
                     </div>
+
+                    @if(! empty($summary['cleaning_task_records']))
+                        <div class="mb-3 rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
+                            <div class="flex items-center gap-1.5 font-semibold text-blue-900 dark:text-blue-100">
+                                <span data-lucide="check-circle" class="h-4 w-4 text-blue-600"></span>
+                                <span>End-of-Day Cleaning Cycles Accounted For Today (+1 added to ending counter):</span>
+                            </div>
+                            <div class="mt-2 flex flex-wrap gap-2">
+                                @foreach($summary['cleaning_task_records'] as $cleanRecord)
+                                    <div class="inline-flex items-center gap-1 rounded-md border border-blue-200 bg-white px-2.5 py-1 text-xs shadow-sm dark:border-blue-900 dark:bg-gray-900">
+                                        <span class="font-bold text-gray-900 dark:text-gray-100">{{ $cleanRecord['task_name'] }}:</span>
+                                        @if(!empty($cleanRecord['wash_machines']))
+                                            <span class="font-semibold text-blue-700 dark:text-blue-300">Wash {{ implode(', ', array_map(fn($m) => "#{$m}", $cleanRecord['wash_machines'])) }} (+1 each)</span>
+                                        @endif
+                                        @if(!empty($cleanRecord['dry_machines']))
+                                            <span class="font-semibold text-amber-700 dark:text-amber-300">Dry {{ implode(', ', array_map(fn($m) => "#{$m}", $cleanRecord['dry_machines'])) }} (+1 each)</span>
+                                        @endif
+                                        <span class="text-muted text-[10px]">by {{ $cleanRecord['completed_by'] }}</span>
+                                    </div>
+                                @endforeach
+                            </div>
+                        </div>
+                    @endif
+
                     <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
                         @foreach(['wash' => 'Wash', 'dry' => 'Dry'] as $type => $label)
                             @for($machine = 1; $machine <= $machineCount; $machine++)
+                                @php($cleanCycles = (int) data_get($machineCounters, "{$machine}.{$type}.cleaning_cycles", 0))
                                 <div class="overflow-hidden rounded-md border border-border dark:border-gray-800">
                                     <div class="bg-smoke px-3 py-2 text-center text-xs font-semibold uppercase dark:bg-gray-950">{{ $label }} {{ $machine }}</div>
                                     <div class="grid grid-cols-2 gap-2 p-2">
@@ -215,6 +249,12 @@
                                             </label>
                                         @endforeach
                                     </div>
+                                    @if($cleanCycles > 0)
+                                        <div class="flex items-center justify-between border-t border-dashed border-blue-200 bg-blue-50/50 px-3 py-1 text-[11px] text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300">
+                                            <span>🧼 Cleaned today</span>
+                                            <span class="font-bold">+{{ $cleanCycles }} cycle</span>
+                                        </div>
+                                    @endif
                                     <div class="flex justify-between border-t border-border bg-blue-50 px-3 py-2 text-xs font-semibold dark:border-gray-800 dark:bg-blue-950/30">
                                         <span>Total {{ $label }} Cycle</span>
                                         <span x-text="cycleTotal('{{ $machine }}', '{{ $type }}')"></span>
