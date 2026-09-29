@@ -82,5 +82,7 @@
             @endunless
         </div>
     </div>
+
+    @include('partials.incoming-tags-modal')
 </body>
 </html>

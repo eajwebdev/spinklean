@@ -16,6 +16,48 @@
         </div>
 
         <div class="flex items-center gap-2">
+            @php
+                $user = auth()->user();
+                $canReceiveTransfers = $user && ($user->isAdmin() || $user->hasMenuAccess('cycles'));
+            @endphp
+
+            @if($canReceiveTransfers)
+                <div
+                    x-data="{
+                        count: 0,
+                        async fetchCount() {
+                            try {
+                                const res = await fetch('{{ route('admin.transfers.count') }}', {
+                                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+                                });
+                                if (res.ok) {
+                                    const data = await res.json();
+                                    this.count = data.pending_count ?? 0;
+                                }
+                            } catch (e) {}
+                        }
+                    }"
+                    x-init="fetchCount(); setInterval(() => fetchCount(), 30000)"
+                    @tags-updated.window="fetchCount()"
+                    class="relative inline-flex items-center"
+                >
+                    <button
+                        type="button"
+                        @click="$dispatch('open-incoming-tags-modal')"
+                        class="relative flex h-9 items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2.5 font-semibold text-amber-900 shadow-sm transition hover:bg-amber-100 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300 dark:hover:bg-amber-500/20"
+                        title="Incoming Laundry Tags"
+                        aria-label="Incoming Laundry Tags"
+                    >
+                        <span data-lucide="tag" class="h-4 w-4 text-amber-700 dark:text-amber-400"></span>
+                        <span class="text-xs uppercase tracking-wide">TAG</span>
+                        <span
+                            class="js-tag-count flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-none text-white shadow-sm"
+                            x-text="count"
+                        >0</span>
+                    </button>
+                </div>
+            @endif
+
             @php($billingNotices = collect($billingNotifications ?? []))
             <div x-data="{ open: false }" class="relative">
                 <button

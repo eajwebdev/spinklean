@@ -127,6 +127,13 @@
                     <tr>
                         <td class="border-l-4 px-4 py-3 font-medium {{ $isReadyForPickup ? 'border-l-teal-500 bg-teal-50/50 dark:bg-teal-500/5' : ($isReadyForDelivery ? 'border-l-orange-500 bg-orange-50/50 dark:bg-orange-500/5' : ($isReleased ? 'border-l-green-500 bg-green-50/50 dark:bg-green-500/5' : ($isInProcess ? 'border-l-blue-500 bg-blue-50/50 dark:bg-blue-500/5' : ($order->status === 'cancelled' ? 'border-l-red-500' : 'border-l-transparent')))) }}">
                             <p>{{ $order->job_order_number }}</p>
+                            @if($order->tag_number)
+                                <div class="mt-1">
+                                    <span class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                        TAG #{{ $order->tag_number }}
+                                    </span>
+                                </div>
+                            @endif
                             @if($order->is_rush)
                                 <span class="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush</span>
                             @endif
@@ -140,21 +147,35 @@
                             <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
                         </td>
                         <td class="px-4 py-3">
-                            <p>{{ $order->branch?->name }}</p>
+                            <p class="font-medium">{{ $order->branch?->name }}</p>
                             @if(($order->branch?->branch_type ?? 'full_service') === 'pickup_dropoff')
-                                <p class="text-xs text-muted">Pickup & Drop-off</p>
+                                <p class="text-xs text-muted">Drop-off & Pickup</p>
+                            @endif
+                            @if($order->isOffsiteProcessing())
+                                @php($pendingReturn = $order->transfers->first(fn($t) => $t->transfer_type === 'return' && $t->transfer_status === 'pending'))
+                                @php($pendingOutbound = $order->transfers->first(fn($t) => $t->transfer_type === 'outbound' && $t->transfer_status === 'pending'))
+                                <div class="mt-1">
+                                    @if($pendingReturn)
+                                        <span class="inline-flex items-center gap-1 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-semibold text-purple-800 dark:bg-purple-900/40 dark:text-purple-300">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-purple-500"></span>
+                                            Returning to {{ $order->branch?->name }}
+                                        </span>
+                                    @elseif($pendingOutbound)
+                                        <span class="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                            In Transit &rarr; {{ $order->processingBranch?->name }}
+                                        </span>
+                                    @elseif($order->production_accepted_at)
+                                        <span class="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+                                            At {{ $order->processingBranch?->name }}
+                                        </span>
+                                    @endif
+                                </div>
                             @endif
                         </td>
                         <td class="px-4 py-3">
                             {{ $order->customer?->address }}
-                            {{-- <p>{{ $order->processingBranch?->name ?? $order->branch?->name }}</p>
-                            @if((int) ($order->processing_branch_id ?: $order->branch_id) !== (int) $order->branch_id)
-                                @if($order->production_accepted_at)
-                                    <p class="text-xs text-emerald-600">Received {{ $order->production_accepted_at->format('M d, h:i A') }}</p>
-                                @else
-                                    <p class="text-xs text-amber-600">Waiting for QR scan</p>
-                                @endif
-                            @endif --}}
                         </td>
                         <td class="px-4 py-3">{{ $appSettings?->currency ?? 'PHP' }} {{ number_format((float) $order->total, 2) }}</td>
                         <td class="px-4 py-3">{{ $appSettings?->currency ?? 'PHP' }} {{ number_format((float) $order->balance, 2) }}</td>
@@ -176,9 +197,11 @@
                             <a href="{{ route('admin.job-orders.show', $order) }}" title="View" aria-label="View job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="eye" class="h-4 w-4"></span>
                             </a>
-                            <a href="{{ route('admin.job-orders.edit', $order) }}" title="Edit" aria-label="Edit job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
-                                <span data-lucide="settings" class="h-4 w-4"></span>
-                            </a>
+                            @if($order->status !== 'cancelled')
+                                <a href="{{ route('admin.job-orders.edit', $order) }}" title="Edit" aria-label="Edit job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                                    <span data-lucide="settings" class="h-4 w-4"></span>
+                                </a>
+                            @endif
                             <button type="button" @click="paymentOpen = {{ $order->id }}" title="Payment history" aria-label="View payment history" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="payments" class="h-4 w-4"></span>
                             </button>
@@ -190,13 +213,42 @@
                             <button type="button" @click="receiptOpen = {{ $order->id }}" title="Receipt" aria-label="Print receipt" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="receipt" class="h-4 w-4"></span>
                             </button>
+                            @php($pendingReturn = $order->transfers->first(fn($t) => $t->transfer_type === 'return' && $t->transfer_status === 'pending'))
+                            @if($pendingReturn && (auth()->user()->canManageAllBranches() || (int) auth()->user()->branch_id === (int) $order->branch_id))
+                                <form method="POST" action="{{ route('admin.transfers.receive-return', $pendingReturn) }}" class="inline">
+                                    @csrf
+                                    <button
+                                        type="submit"
+                                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. Laundry will be ready on shelf for customer pickup.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                        title="Receive returned laundry back at drop-off branch"
+                                        aria-label="Receive returned laundry back at drop-off branch"
+                                        class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-purple-200 text-purple-700 hover:bg-purple-50 dark:border-purple-900/60 dark:text-purple-300 dark:hover:bg-purple-500/10"
+                                    >
+                                        <span data-lucide="package-open" class="h-4 w-4"></span>
+                                    </button>
+                                </form>
+                            @endif
                             @if($isReady)
                                 <form method="POST" action="{{ route('admin.job-orders.release', $order) }}" class="inline">
                                     @csrf
                                     @method('PATCH')
-                                    <button type="submit" x-on:click.prevent="Swal.fire({ title: 'Complete laundry?', text: 'Confirm that this laundry was picked up or sent for delivery. This will mark the job order as completed.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#0f766e', confirmButtonText: 'Complete' }).then((result) => { if (result.isConfirmed) $el.closest('form').submit(); })" title="Release job order to customer" aria-label="Release job order to customer" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-teal-200 text-teal-700 hover:bg-teal-50 dark:border-teal-900/60 dark:text-teal-300 dark:hover:bg-teal-500/10">
-                                        <span data-lucide="package-check" class="h-4 w-4"></span>
-                                    </button>
+                                    @php($balanceNum = (float) $order->balance)
+                                    @php($unpaidLimit = (float) ($order->customer?->unpaid_limit ?? 0))
+                                    @php($hasBlockedBalance = $balanceNum > $unpaidLimit && ! $order->poTransaction && $order->customer?->billing_type !== 'po')
+                                    @if($hasBlockedBalance)
+                                        <button
+                                            type="button"
+                                            x-on:click="Swal.fire({ title: 'Unpaid Balance!', text: @js('Cannot release laundry with unpaid balance of ₱'.number_format($balanceNum, 2).'. Payment must be collected first.'), icon: 'warning', confirmButtonColor: '#dc2626' })"
+                                            title="Unpaid balance must be collected before release"
+                                            class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-amber-300 text-amber-600 hover:bg-amber-50 dark:border-amber-900/60 dark:text-amber-400 opacity-80"
+                                        >
+                                            <span data-lucide="package-check" class="h-4 w-4"></span>
+                                        </button>
+                                    @else
+                                        <button type="submit" x-on:click.prevent="Swal.fire({ title: 'Complete laundry?', text: 'Confirm that this laundry was picked up or sent for delivery. This will mark the job order as completed.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#0f766e', confirmButtonText: 'Complete' }).then((result) => { if (result.isConfirmed) $el.closest('form').submit(); })" title="Release job order to customer" aria-label="Release job order to customer" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-teal-200 text-teal-700 hover:bg-teal-50 dark:border-teal-900/60 dark:text-teal-300 dark:hover:bg-teal-500/10">
+                                            <span data-lucide="package-check" class="h-4 w-4"></span>
+                                        </button>
+                                    @endif
                                 </form>
                             @endif
                             @unless(in_array($order->status, ['completed', 'cancelled'], true))
@@ -207,7 +259,7 @@
                                     <span data-lucide="x" class="h-4 w-4"></span>
                                 </button>
                             @endunless
-                            @if(auth()->user()?->role === 'super_admin')
+                            @if(auth()->user()?->isAdmin())
                                 <form method="POST" action="{{ route('admin.job-orders.destroy', $order) }}" class="inline">
                                     @csrf
                                     @method('DELETE')

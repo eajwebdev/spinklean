@@ -72,6 +72,46 @@
         </form>
     </div>
 
+    <div
+        x-data="{
+            pendingCount: 0,
+            async checkIncoming() {
+                try {
+                    const res = await fetch('{{ route('admin.transfers.count') }}', {
+                        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+                    });
+                    if (res.ok) {
+                        const data = await res.json();
+                        this.pendingCount = data.pending_count ?? 0;
+                    }
+                } catch(e) {}
+            }
+        }"
+        x-init="checkIncoming()"
+        @tags-updated.window="checkIncoming()"
+        x-show="pendingCount > 0"
+        x-cloak
+        class="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-amber-900 shadow-sm dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300 sm:flex-row sm:items-center sm:justify-between"
+    >
+        <div class="flex items-center gap-3">
+            <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-200/70 text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                <span data-lucide="tag" class="h-5 w-5"></span>
+            </div>
+            <div>
+                <p class="text-sm font-bold">Incoming Laundry Tags Waiting to be Received</p>
+                <p class="text-xs opacity-90"><span class="js-tag-count font-bold" x-text="pendingCount">0</span> incoming order(s) transferred from drop-off branches ready to be added to this queue.</p>
+            </div>
+        </div>
+        <button
+            type="button"
+            @click="$dispatch('open-incoming-tags-modal')"
+            class="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-amber-600 px-3.5 text-xs font-bold text-white shadow hover:bg-amber-700"
+        >
+            <span data-lucide="inbox" class="h-4 w-4"></span>
+            TAG (<span class="js-tag-count" x-text="pendingCount">0</span>) - Receive Tags
+        </button>
+    </div>
+
     <div class="grid items-start gap-4 xl:grid-cols-[minmax(36rem,46rem)_minmax(26rem,1fr)]">
     @if($machineOverviewBranches->isNotEmpty())
         <section class="rounded-xl border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
@@ -81,11 +121,7 @@
                     <h2 class="mt-1 text-lg font-semibold">Live availability</h2>
                 </div>
                 <p class="text-xs text-muted">
-                    Usage counts by cycle date only:
-                    {{ \Illuminate\Support\Carbon::parse($activityDateFrom)->format('M d, Y') }}
-                    @if($activityDateFrom !== $activityDateTo)
-                        - {{ \Illuminate\Support\Carbon::parse($activityDateTo)->format('M d, Y') }}
-                    @endif
+                    Latest Z Reading plus cycles recorded afterward
                 </p>
             </div>
 
@@ -93,7 +129,7 @@
                 @foreach($machineOverviewBranches as $machineBranch)
                     @php($machineTotal = (int) $machineBranch->machine_count)
                     @php($branchActiveMachines = $activeMachinesByBranch[$machineBranch->id] ?? [])
-                    @php($branchMachineActivity = $machineActivityByBranch[$machineBranch->id] ?? [])
+                    @php($branchMachineReadings = $machineCounterReadingsByBranch[$machineBranch->id] ?? [])
                     <article>
                         <div class="mb-2 flex items-center justify-between gap-3">
                             <div>
@@ -114,7 +150,7 @@
                                             @for($machine = 1; $machine <= $machineTotal; $machine++)
                                                 @php($activeMachine = data_get($branchActiveMachines, $machineType.'.'.$machine))
                                                 @php($isAvailable = ! $activeMachine)
-                                                @php($activityCount = (int) data_get($branchMachineActivity, $machine.'.'.$machineType, 0))
+                                                @php($counterReading = (int) data_get($branchMachineReadings, $machine.'.'.$machineType, 0))
                                                 <div class="machine-status-card min-w-0 overflow-hidden rounded-xl border border-border bg-gradient-to-b from-white to-slate-50 shadow-sm dark:border-gray-800 dark:from-gray-900 dark:to-gray-950">
                                                     <div class="flex items-center justify-between px-2.5 py-2">
                                                         <span class="truncate text-xs font-semibold">{{ $machineType === 'wash' ? 'Wash' : 'Dry' }} #{{ $machine }}</span>
@@ -130,8 +166,8 @@
                                                         class="machine-status-image {{ $isAvailable ? 'machine-status-image-ready' : 'machine-status-image-running' }} mx-auto h-20 w-20 rounded-lg object-cover"
                                                     >
                                                     <div class="border-t border-border px-1.5 py-1.5 text-center dark:border-gray-800">
-                                                        <p class="text-base font-bold {{ $machineType === 'wash' ? 'text-sky-600' : 'text-violet-600' }}">{{ $activityCount }}</p>
-                                                        <p class="text-[9px] font-semibold uppercase tracking-wide text-muted">{{ $machineType === 'wash' ? 'Washing cycles' : 'Drying cycles' }}</p>
+                                                        <p class="text-base font-bold {{ $machineType === 'wash' ? 'text-sky-600' : 'text-violet-600' }}">{{ str_pad((string) $counterReading, 4, '0', STR_PAD_LEFT) }}</p>
+                                                        <p class="text-[9px] font-semibold uppercase tracking-wide text-muted">{{ $machineType === 'wash' ? 'Current washer reading' : 'Current dryer reading' }}</p>
                                                     </div>
                                                     @if(! $isAvailable)
                                                         <div class="border-t border-border px-2 py-1.5 text-center text-[10px] font-medium text-red-600 dark:border-gray-800" title="{{ $activeMachine['job_order_number'] }}">
@@ -191,6 +227,11 @@
                     <div class="min-w-0">
                         <div class="flex flex-wrap items-center gap-1.5">
                             <p class="truncate font-semibold">{{ $order->customer?->name ?? 'Unknown customer' }}</p>
+                            @if($order->tag_number)
+                                <span class="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-bold text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">
+                                    TAG #{{ $order->tag_number }}
+                                </span>
+                            @endif
                             @if($order->is_rush)
                                 <span class="rounded-md border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush</span>
                             @endif
@@ -201,13 +242,13 @@
                         <p class="truncate text-sm text-muted">{{ $order->job_order_number }}</p>
                         <p class="text-xs font-medium text-primary">Order date: {{ $order->created_at?->format('M d, Y') }}</p>
                         <p class="truncate text-xs text-muted">
-                            Drop-off: {{ $order->branch?->name }} - Receiving/Processing: {{ $processingBranch?->name }} - Release: {{ $releaseBranch?->name }}
+                            Drop-off: {{ $order->branch?->name }} - Receiving/Processing: {{ $processingBranch?->name }}
                         </p>
                         @if($isCrossBranchProduction)
                             @if($order->production_accepted_at)
-                                <p class="text-xs text-emerald-600">Received by QR scan {{ $order->production_accepted_at->format('M d, h:i A') }}</p>
+                                <p class="text-xs text-emerald-600 font-medium">Received into production {{ $order->production_accepted_at->format('M d, h:i A') }}</p>
                             @else
-                                <p class="text-xs text-amber-600">Assigned only. Waiting for {{ $processingBranch?->name }} QR scan before branch cycle.</p>
+                                <p class="text-xs text-amber-600 font-medium">Transferred from {{ $order->branch?->name }}. Pending tag reception.</p>
                             @endif
                         @endif
                     </div>
@@ -312,7 +353,61 @@
                             </form>
                         @endforeach
                     </div>
+                @else
+                    @if(in_array($order->status, ['ready_for_pickup', 'ready_for_delivery'], true))
+                        @php($pendingReturn = ! $order->current_branch_id && $order->release_branch_id && $order->release_branch_id === $order->branch_id)
+                        <div class="mb-3 rounded-lg border border-teal-200 bg-teal-50/50 p-3 dark:border-teal-900/60 dark:bg-teal-500/10">
+                            <div class="flex items-center justify-between gap-2 mb-2">
+                                <span class="text-xs font-bold text-teal-800 dark:text-teal-300">
+                                    {{ $order->status === 'ready_for_pickup' ? 'Ready for Pickup' : 'Ready for Delivery' }}
+                                </span>
+                                @if($order->tag_number)
+                                    <span class="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                        TAG #{{ $order->tag_number }}
+                                    </span>
+                                @endif
+                            </div>
 
+                            @if($pendingReturn)
+                                <div class="rounded bg-purple-100 p-2 text-xs font-semibold text-purple-800 dark:bg-purple-900/40 dark:text-purple-300 flex items-center gap-1.5">
+                                    <span data-lucide="truck" class="h-4 w-4"></span>
+                                    <span>In Transit: Returning back to {{ $order->branch?->name }}</span>
+                                </div>
+                            @else
+                                <div class="flex flex-wrap gap-2">
+                                    @if($canReturnToDropoff)
+                                        <form method="POST" action="{{ route('admin.cycles.release', $order) }}">
+                                            @csrf
+                                            @method('PATCH')
+                                            <input type="hidden" name="action" value="return_to_dropoff">
+                                            <button
+                                                type="submit"
+                                                x-on:click.prevent="Swal.fire({ title: 'Return to {{ $order->branch?->name }}?', text: 'This will initiate a return transfer of Tag #{{ $order->tag_number }} back to the drop-off branch.', icon: 'question', showCancelButton: true, confirmButtonText: 'Return Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                                class="inline-flex h-8 items-center gap-1.5 rounded-md bg-purple-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-purple-700"
+                                            >
+                                                <span data-lucide="truck" class="h-3.5 w-3.5"></span>
+                                                Return to {{ $order->branch?->name }}
+                                            </button>
+                                        </form>
+                                    @endif
+
+                                    <form method="POST" action="{{ route('admin.cycles.release', $order) }}">
+                                        @csrf
+                                        @method('PATCH')
+                                        <input type="hidden" name="action" value="release">
+                                        <button
+                                            type="submit"
+                                            x-on:click.prevent="Swal.fire({ title: 'Direct Release / Delivery?', text: 'Confirm release to customer or direct delivery rider from this branch. Payment will be verified.', icon: 'warning', showCancelButton: true, confirmButtonText: 'Release Laundry', confirmButtonColor: '#0f766e' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                            class="inline-flex h-8 items-center gap-1.5 rounded-md bg-teal-600 px-3 text-xs font-semibold text-white shadow-sm hover:bg-teal-700"
+                                        >
+                                            <span data-lucide="package-check" class="h-3.5 w-3.5"></span>
+                                            Direct Release
+                                        </button>
+                                    </form>
+                                </div>
+                            @endif
+                        </div>
+                    @endif
                 @endif
 
                 <div class="border-t border-border pt-3 dark:border-gray-800">

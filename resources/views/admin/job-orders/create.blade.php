@@ -8,6 +8,7 @@
         'initialItems' => $isEditing ? $initialItems : [],
         'selectedCustomerId' => (string) old('customer_id', $selectedCustomerId ?? ''),
         'processingBranchId' => (string) old('processing_branch_id', $isEditing ? ($jobOrder->processing_branch_id ?: $jobOrder->branch_id) : ''),
+        'tagNumber' => (string) old('tag_number', $isEditing ? ($jobOrder->tag_number ?? '') : ''),
         'discount' => (float) old('discount', $isEditing ? $jobOrder->discount : 0),
         'paid' => (float) ($isEditing ? $jobOrder->payments->sum('amount') : old('paid_amount', 0)),
         'paymentType' => old('payment_type', $isEditing ? 'unpaid' : 'unpaid'),
@@ -82,17 +83,17 @@
                     @endif
 
                     @php
-                        $selectedBranch = $branches->firstWhere('id', (int) $branchId);
-                        $canSelectProcessingBranch = auth()->user()->isAdmin() || $selectedBranch?->isPickupDropoff();
+                        $userCanChoose = in_array(auth()->user()->role, ['super_admin', 'admin'], true);
+                        $currentSelectedBranch = $branches->firstWhere('id', (int) $branchId);
+                        $isCurrentDropoff = $currentSelectedBranch?->isNoMachine();
                     @endphp
-
-                    @if($canSelectProcessingBranch)
+                    @if($userCanChoose || $isCurrentDropoff)
                         <div class="flex flex-col gap-1">
                             <span class="text-[10px] font-medium text-muted">Receiving Production Branch</span>
                             <div class="flex items-center gap-2">
                                 <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
-                                <select name="processing_branch_id" x-model="processingBranchId" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" required>
-                                    <template x-for="branch in processingBranches" :key="branch.id">
+                                <select name="processing_branch_id" x-model="processingBranchId" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" :required="isNoMachineBranch">
+                                    <template x-for="branch in availableProcessingBranches" :key="branch.id">
                                         <option :value="branch.id" x-text="branch.name"></option>
                                     </template>
                                 </select>
@@ -102,14 +103,14 @@
                         <input type="hidden" name="processing_branch_id" value="{{ $branchId }}">
                         <div class="flex items-center gap-1.5">
                             <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
-                            <span class="text-xs text-muted">{{ $branches->firstWhere('id', (int) $branchId)?->name }}</span>
+                            <span class="text-xs text-muted">{{ $currentSelectedBranch?->name }}</span>
                         </div>
                     @endif
                 </div>
             </div>
 
             <!-- CUSTOMER & ORDER OPTIONS - Clean Grid -->
-            <div class="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900 md:grid-cols-3">
+            <div class="mb-3 grid grid-cols-1 gap-2 rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900 md:grid-cols-4">
                 <!-- Customer -->
                 <div class="relative" @click.outside="customerOpen = false">
                     <label class="mb-1 block text-[10px] font-medium text-muted">Customer</label>
@@ -144,6 +145,40 @@
                         </template>
                         <div x-show="filteredCustomers.length === 0" class="px-3 py-6 text-center text-sm text-muted">No customers found</div>
                     </div>
+                </div>
+
+                <!-- Laundry Tag # -->
+                <div>
+                    <div class="flex items-center justify-between mb-1">
+                        <label class="block text-[10px] font-medium text-muted">
+                            Laundry Tag #
+                            <span x-show="isNoMachineBranch" class="text-red-500 font-bold">*</span>
+                        </label>
+                        <span x-show="tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
+                        <span x-show="tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
+                    </div>
+                    <div class="relative">
+                        <input
+                            type="text"
+                            name="tag_number"
+                            x-model="tagNumber"
+                            @input.debounce.300ms="checkTagAvailability()"
+                            :required="isNoMachineBranch"
+                            placeholder="e.g. TAG-001 or 12"
+                            class="h-9 w-full rounded-md border bg-white px-3 pr-8 text-sm shadow-sm dark:border-gray-800 dark:bg-gray-950 font-medium"
+                            :class="tagStatus === 'taken' ? 'border-red-500 focus:border-red-500 ring-1 ring-red-500' : (tagStatus === 'available' ? 'border-emerald-500 focus:border-emerald-500' : 'border-border')"
+                            autocomplete="off"
+                        >
+                        <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2.5">
+                            <span x-show="tagChecking" class="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></span>
+                            <span x-show="!tagChecking && tagStatus === 'available'" data-lucide="check" class="h-4 w-4 text-emerald-500"></span>
+                            <span x-show="!tagChecking && tagStatus === 'taken'" data-lucide="alert-circle" class="h-4 w-4 text-red-500"></span>
+                        </div>
+                    </div>
+                    <p x-show="tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
+                    @error('tag_number')
+                        <p class="mt-1 text-[11px] text-red-500">{{ $message }}</p>
+                    @enderror
                 </div>
 
                 <!-- Notes -->
@@ -482,10 +517,15 @@
 function posPage(branches, processingBranches, services, customers, serviceCategories, servicePresets, vatRate, vatEnabled, initialState = {}) {
     return {
         isEditing: Boolean(initialState.isEditing),
+        isAdmin: @js(auth()->user()->isAdmin()),
         branchId: @js((string) $branchId),
         branches: branches || [],
         processingBranches: processingBranches || [],
         processingBranchId: initialState.processingBranchId || '',
+        tagNumber: initialState.tagNumber || '',
+        tagChecking: false,
+        tagStatus: null,
+        tagMessage: '',
         services: services || [],
         servicePresets: servicePresets || [],
         customers: customers || [],
@@ -503,6 +543,51 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         typeFilter: 'all',
         vatRate: vatRate || 0,
         vatEnabled: vatEnabled || false,
+        get isNoMachineBranch() {
+            const branch = this.selectedBranch;
+            return Boolean(branch && (branch.branch_type === 'pickup_dropoff' || (branch.machine_count ?? 0) === 0));
+        },
+        get availableProcessingBranches() {
+            return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
+        },
+        async checkTagAvailability() {
+            const tag = (this.tagNumber || '').trim();
+            if (!tag) {
+                this.tagStatus = null;
+                this.tagMessage = '';
+                return;
+            }
+            this.tagChecking = true;
+            this.tagStatus = 'checking';
+            try {
+                const url = new URL('{{ route('admin.tags.check') }}', window.location.origin);
+                url.searchParams.set('tag', tag);
+                @if($isEditing)
+                    url.searchParams.set('ignore_id', '{{ $jobOrder->id }}');
+                @endif
+                const res = await fetch(url.toString(), {
+                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                    credentials: 'same-origin'
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.available) {
+                        this.tagStatus = 'available';
+                        this.tagMessage = data.message;
+                    } else {
+                        this.tagStatus = 'taken';
+                        this.tagMessage = data.message;
+                    }
+                }
+            } catch (e) {
+                this.tagStatus = null;
+            } finally {
+                this.tagChecking = false;
+                this.$nextTick(() => {
+                    if (window.lucide) window.lucide.createIcons();
+                });
+            }
+        },
         get serviceTypes() {
             const all = { value: 'all', label: 'All', icon: 'grid' };
             const cats = this.serviceCategories
@@ -511,10 +596,13 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             return [all, ...cats];
         },
         init() {
-            if (!this.processingBranchId) {
+            if (!this.processingBranchId || (this.isNoMachineBranch && String(this.processingBranchId) === String(this.branchId))) {
                 this.setDefaultProcessingBranch();
             }
             this.syncSelectedCustomer();
+            if (this.tagNumber) {
+                this.checkTagAvailability();
+            }
             
             // Watch for branch changes
             this.$watch('branchId', () => {
@@ -563,12 +651,13 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             const branch = this.selectedBranch;
             const fullService = this.processingBranches.find(option => String(option.id) === String(this.branchId));
 
-            if (branch && branch.branch_type !== 'pickup_dropoff' && fullService) {
+            if (branch && branch.branch_type !== 'pickup_dropoff' && (branch.machine_count ?? 0) > 0 && fullService) {
                 this.processingBranchId = fullService.id;
                 return;
             }
 
-            this.processingBranchId = this.processingBranches[0]?.id || '';
+            const candidate = this.availableProcessingBranches[0];
+            this.processingBranchId = candidate?.id || this.processingBranches[0]?.id || '';
         },
         get availableCustomers() {
             return this.customers.filter(customer => String(customer.branch_id) === String(this.branchId));

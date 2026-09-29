@@ -30,6 +30,9 @@
 
     <div class="my-4 border-y border-dashed border-border py-3 text-xs">
         <div class="flex justify-between"><span>JO #</span><span class="font-medium">{{ $order->job_order_number }}</span></div>
+        @if($order->tag_number)
+            <div class="flex justify-between font-bold text-sm text-amber-900"><span>TAG #</span><span>{{ $order->tag_number }}</span></div>
+        @endif
         <div class="flex justify-between"><span>Date</span><span>{{ $order->created_at->format('M d, Y h:i A') }}</span></div>
         <div class="flex justify-between"><span>Sales Branch</span><span>{{ $order->branch?->name }}</span></div>
         <div class="flex justify-between"><span>Receiving Branch</span><span>{{ $order->processingBranch?->name ?? $order->branch?->name }}</span></div>

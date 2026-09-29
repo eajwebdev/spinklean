@@ -35,12 +35,42 @@ class Branch extends Model
 
     public function isPickupDropoff(): bool
     {
-        return $this->branch_type === 'pickup_dropoff';
+        return in_array($this->branch_type, ['pickup_dropoff', 'no_machine'], true);
     }
 
     public function isFullService(): bool
     {
-        return $this->branch_type !== 'pickup_dropoff';
+        return ! $this->isPickupDropoff();
+    }
+
+    public function isMachineEquipped(): bool
+    {
+        return $this->isFullService();
+    }
+
+    public function isNoMachine(): bool
+    {
+        return $this->isPickupDropoff();
+    }
+
+    public function scopeMachineEquipped($query)
+    {
+        return $query->where('branch_type', 'full_service')->where('machine_count', '>', 0);
+    }
+
+    public function scopeNoMachine($query)
+    {
+        return $query->whereIn('branch_type', ['pickup_dropoff', 'no_machine']);
+    }
+
+    public function transfersIn()
+    {
+        return $this->hasMany(JobOrderTransfer::class, 'destination_branch_id');
+    }
+
+    public function transfersOut()
+    {
+        return $this->hasMany(JobOrderTransfer::class, 'origin_branch_id');
     }
 
     public function users()

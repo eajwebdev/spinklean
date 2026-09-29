@@ -7,6 +7,8 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\CycleRecord;
 use App\Models\JobOrder;
+use App\Models\JobOrderTransfer;
+use App\Models\ZReading;
 use App\Support\Activity;
 use App\Support\SmsNotifier;
 use Illuminate\Http\Request;
@@ -16,9 +18,11 @@ use Illuminate\Validation\Rule;
 
 class CycleController extends Controller
 {
+    private const COUNTER_MODULUS = 10000;
+
     private const CYCLE_HISTORY_LIMIT = 5;
 
-    private const FILTER_STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
+    private const FILTER_STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
 
     private const CYCLE_TYPES = [
         'wash' => 'Washing',
@@ -57,6 +61,7 @@ class CycleController extends Controller
         $selectedStatus = in_array($request->status, self::FILTER_STATUSES, true) ? $request->status : null;
         $statusLabels = [
             'pending' => 'Pending',
+            'received' => 'Received',
             'washing' => 'Washing',
             'drying' => 'Drying',
             'folding' => 'Folding / Ironing',
@@ -117,6 +122,7 @@ class CycleController extends Controller
 
                 $q->where(fn ($query) => $query
                     ->where('job_order_number', 'like', "%{$search}%")
+                    ->orWhere('tag_number', 'like', "%{$search}%")
                     ->orWhereHas('customer', fn ($query) => $query->where('name', 'like', "%{$search}%")
                         ->orWhere('phone', 'like', "%{$search}%")));
             });
@@ -130,6 +136,7 @@ class CycleController extends Controller
                 'release_branch_id',
                 'customer_id',
                 'job_order_number',
+                'tag_number',
                 'status',
                 'transaction_type',
                 'is_rush',
@@ -179,6 +186,7 @@ class CycleController extends Controller
             ->join('customers', 'customers.id', '=', 'job_orders.customer_id')
             ->whereNull('cycle_records.ended_at')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereNotNull('cycle_records.machine_number')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereIn(DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'), $machineOverviewBranchIds)
@@ -189,7 +197,7 @@ class CycleController extends Controller
                 'job_orders.job_order_number',
                 'job_orders.is_rush',
                 'customers.name as customer_name',
-                DB::raw('(SELECT COUNT(*) FROM job_orders AS customer_orders WHERE customer_orders.customer_id = customers.id AND customer_orders.deleted_at IS NULL) as customer_orders_count'),
+                DB::raw("(SELECT COUNT(*) FROM job_orders AS customer_orders WHERE customer_orders.customer_id = customers.id AND customer_orders.deleted_at IS NULL AND customer_orders.status != 'cancelled') as customer_orders_count"),
             ])
             ->groupBy('operating_branch_id')
             ->map(fn ($cycles) => $cycles
@@ -207,16 +215,35 @@ class CycleController extends Controller
             )
             ->all() : [];
 
-        $activityDateFrom = $dateFrom ?: now()->toDateString();
-        $activityDateTo = $dateTo ?: now()->toDateString();
-        $machineActivityByBranch = $hasMachineOverview ? DB::table('cycle_records')
+        $latestZReadingDates = DB::table('z_readings')
+            ->selectRaw('branch_id, MAX(business_date) as business_date')
+            ->whereIn('branch_id', $machineOverviewBranchIds)
+            ->groupBy('branch_id');
+        $latestZReadingsByBranch = $hasMachineOverview ? ZReading::query()
+            ->joinSub($latestZReadingDates, 'latest_z_readings', fn ($join) => $join
+                ->on('latest_z_readings.branch_id', '=', 'z_readings.branch_id')
+                ->on('latest_z_readings.business_date', '=', 'z_readings.business_date'))
+            ->select('z_readings.*')
+            ->get()
+            ->keyBy('branch_id') : collect();
+
+        $machineCycleIncrementsByBranch = $hasMachineOverview ? DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
             ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
             ->whereNotNull('cycle_records.machine_number')
-            ->where('cycle_records.started_at', '>=', Carbon::parse($activityDateFrom)->startOfDay())
-            ->where('cycle_records.started_at', '<=', Carbon::parse($activityDateTo)->endOfDay())
-            ->whereIn(DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id)'), $machineOverviewBranchIds)
+            ->where(function ($query) use ($machineOverviewBranchIds, $latestZReadingsByBranch) {
+                foreach ($machineOverviewBranchIds as $branchId) {
+                    $query->orWhere(function ($query) use ($branchId, $latestZReadingsByBranch) {
+                        $query->whereRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) = ?', [$branchId]);
+
+                        if ($latestZReading = $latestZReadingsByBranch->get($branchId)) {
+                            $query->whereDate('cycle_records.started_at', '>', $latestZReading->business_date->toDateString());
+                        }
+                    });
+                }
+            })
             ->groupByRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id), cycle_records.machine_number, cycle_records.cycle_type')
             ->get([
                 DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) as operating_branch_id'),
@@ -234,6 +261,24 @@ class CycleController extends Controller
                 ->all())
             ->all() : [];
 
+        $machineCounterReadingsByBranch = $machineOverviewBranches
+            ->mapWithKeys(function (Branch $branch) use ($latestZReadingsByBranch, $machineCycleIncrementsByBranch) {
+                $latestCounters = $latestZReadingsByBranch->get($branch->id)?->machine_counters ?? [];
+                $increments = $machineCycleIncrementsByBranch[$branch->id] ?? [];
+                $machineReadings = [];
+
+                for ($machine = 1; $machine <= (int) $branch->machine_count; $machine++) {
+                    foreach (['wash', 'dry'] as $type) {
+                        $lastEnding = (int) data_get($latestCounters, "{$machine}.{$type}.ending", 0);
+                        $increment = (int) data_get($increments, "{$machine}.{$type}", 0);
+                        $machineReadings[$machine][$type] = ($lastEnding + $increment) % self::COUNTER_MODULUS;
+                    }
+                }
+
+                return [$branch->id => $machineReadings];
+            })
+            ->all();
+
         return view('admin.cycles.index', [
             'activeMachinesByBranch' => $activeMachinesByBranch,
             'branches' => $branches,
@@ -242,9 +287,7 @@ class CycleController extends Controller
             'orders' => $orders,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
-            'activityDateFrom' => $activityDateFrom,
-            'activityDateTo' => $activityDateTo,
-            'machineActivityByBranch' => $machineActivityByBranch,
+            'machineCounterReadingsByBranch' => $machineCounterReadingsByBranch,
             'machineOverviewBranches' => $machineOverviewBranches,
             'selectedBranchId' => $selectedBranchId,
             'selectedCustomerId' => $selectedCustomerId,
@@ -325,15 +368,36 @@ class CycleController extends Controller
                 'released_at' => null,
             ]);
 
+            JobOrderTransfer::create([
+                'job_order_id' => $jobOrder->id,
+                'job_order_number' => $jobOrder->job_order_number,
+                'tag_number' => $jobOrder->tag_number,
+                'origin_branch_id' => $request->user()->branch_id ?: $processingBranchId,
+                'destination_branch_id' => $jobOrder->branch_id,
+                'transfer_type' => 'return',
+                'transfer_status' => 'pending',
+                'transferred_at' => now(),
+                'transferred_by' => $request->user()->id,
+                'notes' => 'Returned to drop-off branch for customer pickup',
+            ]);
+
             Activity::log($request, 'job_order_returned_to_dropoff', $jobOrder, [
                 'job_order_number' => $jobOrder->job_order_number,
+                'tag_number' => $jobOrder->tag_number,
                 'dropoff_branch_id' => $jobOrder->branch_id,
+                'processing_branch_id' => $processingBranchId,
             ], $jobOrder->branch_id);
 
             return back()->with('success', 'Laundry returned to drop-off branch for release.');
         }
 
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
+
+        $jobOrder->loadMissing(['customer', 'poTransaction']);
+        if ((float) $jobOrder->balance > 0 && ! $jobOrder->poTransaction && $jobOrder->customer?->billing_type !== 'po') {
+            $unpaidLimit = (float) ($jobOrder->customer?->unpaid_limit ?? 0);
+            abort_if((float) $jobOrder->balance > $unpaidLimit, 422, 'Cannot release laundry with unpaid balance of ₱'.number_format($jobOrder->balance, 2).'. Payment must be verified and collected first.');
+        }
 
         $jobOrder->endActiveCycles();
 
@@ -346,6 +410,7 @@ class CycleController extends Controller
 
         Activity::log($request, 'job_order_released', $jobOrder, [
             'job_order_number' => $jobOrder->job_order_number,
+            'tag_number' => $jobOrder->tag_number,
             'release_branch_id' => $jobOrder->release_branch_id,
         ], $jobOrder->release_branch_id);
 
@@ -358,6 +423,10 @@ class CycleController extends Controller
     public function storeCycle(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeOrder($request, $jobOrder);
+
+        $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
+        abort_if($processingBranch?->isNoMachine(), 403, 'This branch has no machines to run cycles.');
+        abort_if($request->user()->branch?->isNoMachine() && ! $request->user()->canManageAllBranches(), 403, 'No-machine branches cannot perform cycle monitoring.');
 
         if ($request->filled('machine_number') && ! $request->filled('machine_numbers')) {
             $request->merge(['machine_numbers' => [(int) $request->input('machine_number')]]);
@@ -372,7 +441,7 @@ class CycleController extends Controller
 
         $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
         $machineCount = (int) ($processingBranch?->machine_count ?? 0);
-        
+
         // For wash/dry cycles, require at least one machine
         if (in_array($validated['cycle_type'], ['wash', 'dry'], true) && $machineCount > 0 && empty($validated['machine_numbers'])) {
             return back()->withErrors([
@@ -412,7 +481,7 @@ class CycleController extends Controller
                     $conflictingMachines[(int) $machineNumber] = $conflictingCycle;
                 }
             }
-            
+
             if (! empty($conflictingMachines)) {
                 $machineLabel = $validated['cycle_type'] === 'wash' ? 'Wash' : 'Dry';
                 if (count($conflictingMachines) === 1) {
@@ -426,6 +495,7 @@ class CycleController extends Controller
                 }
 
                 $machines = implode(', ', array_map(fn ($m) => "#{$m}", array_keys($conflictingMachines)));
+
                 return back()->withErrors([
                     'machine_number' => "{$machineLabel} machine(s) {$machines} are currently in use.",
                     'machine_numbers' => "{$machineLabel} machine(s) {$machines} are currently in use.",
@@ -475,7 +545,7 @@ class CycleController extends Controller
             'released_at' => null,
         ]);
 
-        $machineStr = ! empty($machineNumbers) ? ' on machine(s) #' . implode(', #', $machineNumbers) : '';
+        $machineStr = ! empty($machineNumbers) ? ' on machine(s) #'.implode(', #', $machineNumbers) : '';
         Activity::log($request, 'cycle_started', $createdCycles[0] ?? null, [
             'job_order_number' => $jobOrder->job_order_number,
             'cycle_type' => $validated['cycle_type'],
@@ -483,7 +553,7 @@ class CycleController extends Controller
             'cycle_number' => $cycleNumber,
         ], $jobOrder->branch_id);
 
-        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started' . $machineStr . '.');
+        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started'.$machineStr.'.');
     }
 
     public function endCycle(Request $request, CycleRecord $cycle)

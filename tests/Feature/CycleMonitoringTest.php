@@ -623,7 +623,7 @@ class CycleMonitoringTest extends TestCase
         ]);
     }
 
-    public function test_machine_overview_shows_live_image_and_filtered_daily_activity(): void
+    public function test_machine_overview_shows_live_image_and_current_counter_reading(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -693,12 +693,12 @@ class CycleMonitoringTest extends TestCase
             ->assertSeeInOrder([
                 'Wash #1',
                 'unavailable.png',
-                '>1</p>',
-                'Washing cycles',
+                '>0001</p>',
+                'Current washer reading',
                 'Dry Machines',
                 'Dry #1',
-                '>1</p>',
-                'Drying cycles',
+                '>0001</p>',
+                'Current dryer reading',
             ], false)
             ->assertDontSee('JO-MACHINE-HIDDEN');
 
@@ -706,7 +706,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(5, substr_count($response->getContent(), 'text-xs font-semibold">Dry #'));
     }
 
-    public function test_machine_usage_counts_ignore_search_customer_and_status_filters(): void
+    public function test_machine_counter_uses_latest_z_reading_and_ignores_queue_filters(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -729,15 +729,31 @@ class CycleMonitoringTest extends TestCase
         $hiddenOrder = $this->createJobOrder($branch, $hiddenCustomer, 'JO-USAGE-HIDDEN');
         $hiddenOrder->update(['status' => 'completed', 'completed_at' => '2026-06-10 12:00:00']);
 
-        foreach ([$visibleOrder, $hiddenOrder] as $order) {
+        $cancelledOrder = $this->createJobOrder($branch, $hiddenCustomer, 'JO-USAGE-CANCELLED');
+        $cancelledOrder->update(['status' => 'cancelled']);
+
+        \App\Models\ZReading::query()->create([
+            'branch_id' => $branch->id,
+            'reading_number' => 'ZR-MACHINE-BASELINE',
+            'business_date' => '2026-06-09',
+            'machine_counters' => [
+                1 => [
+                    'wash' => ['beginning' => 95, 'ending' => 100, 'total' => 5],
+                    'dry' => ['beginning' => 195, 'ending' => 200, 'total' => 5],
+                ],
+            ],
+            'signature_name' => 'Test User',
+        ]);
+
+        foreach ([$visibleOrder, $hiddenOrder, $cancelledOrder] as $index => $order) {
             CycleRecord::query()->create([
                 'job_order_id' => $order->id,
                 'user_id' => $user->id,
                 'cycle_type' => 'wash',
                 'machine_number' => 1,
                 'cycle_number' => 1,
-                'started_at' => '2026-06-10 09:00:00',
-                'ended_at' => '2026-06-10 10:00:00',
+                'started_at' => \Illuminate\Support\Carbon::parse('2026-06-10 09:00:00')->addDays($index),
+                'ended_at' => \Illuminate\Support\Carbon::parse('2026-06-10 10:00:00')->addDays($index),
             ]);
         }
 
@@ -753,10 +769,11 @@ class CycleMonitoringTest extends TestCase
             ->assertDontSee('JO-USAGE-HIDDEN')
             ->assertSeeInOrder([
                 'Wash #1',
-                '>2</p>',
-                'Washing cycles',
+                '>0102</p>',
+                'Current washer reading',
             ], false)
-            ->assertSee('Usage counts by cycle date only');
+            ->assertSee('Latest Z Reading plus cycles recorded afterward')
+            ->assertDontSee('Cumulative usage since the first recorded cycle');
     }
 
     public function test_cycle_monitoring_keeps_large_lists_and_history_bounded(): void
@@ -809,7 +826,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(50, $orders->total());
         $this->assertSame(8, $orders->first()->cycles_count);
         $this->assertCount(5, $orders->first()->cycles);
-        $this->assertLessThanOrEqual(21, count(DB::getQueryLog()));
+        $this->assertLessThanOrEqual(25, count(DB::getQueryLog()));
     }
 
     public function test_machine_can_be_reused_after_cycle_ends(): void
@@ -1134,6 +1151,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-1142',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));
@@ -1202,7 +1220,7 @@ class CycleMonitoringTest extends TestCase
             'status' => 'queued',
         ]);
         $this->assertStringContainsString(
-            'We picked up your laundry for delivery',
+            "We've picked up and received your laundry",
             (string) \App\Models\SmsLog::query()->value('message')
         );
     }
@@ -1367,6 +1385,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-1375',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));
@@ -1824,6 +1843,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-TEST-DROP',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));

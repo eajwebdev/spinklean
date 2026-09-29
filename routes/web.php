@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\ExpenseController;
 use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\Admin\JobOrderController;
+use App\Http\Controllers\Admin\JobOrderTransferController;
 use App\Http\Controllers\Admin\LaundryServiceCategoryController;
 use App\Http\Controllers\Admin\LaundryServiceController;
 use App\Http\Controllers\Admin\PaymentController;
@@ -25,8 +26,8 @@ use App\Http\Controllers\Admin\SubscriptionBillingController;
 use App\Http\Controllers\Admin\SystemSettingController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\ZReadingController;
-use App\Http\Controllers\PublicUploadController;
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\PublicUploadController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/pay', function () {
@@ -36,7 +37,7 @@ Route::get('/pay', function () {
 // Per-branch static QRPH payment pages, e.g. /osmena/pay and /pacana/pay.
 Route::get('/{branch}/pay', function (string $branch) {
     $map = [
-        'osmena' => ['image' => 'uploads/pay-osmena.png', 'name' => 'Spin Klean Laundry - Osmeña', 'download' => 'SpinKlean-Osmena-QR.png'],
+        'osmena' => ['image' => 'uploads/pay-osmenav2.png', 'name' => 'Spin Klean Laundry - Osmeña', 'download' => 'SpinKlean-Osmena-QR.png'],
         'pacana' => ['image' => 'uploads/pay-pacana.jpg', 'name' => 'Spin Klean Laundry - Pacana', 'download' => 'SpinKlean-Pacana-QR.jpg'],
     ];
 
@@ -142,6 +143,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         Route::middleware('menu.access:payments')->group(function () {
             Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');
             Route::patch('/payments/{payment}', [PaymentController::class, 'update'])->name('payments.update');
+            Route::delete('/payments/{payment}', [PaymentController::class, 'destroy'])->name('payments.destroy');
         });
         Route::middleware('menu.access:inventory')->group(function () {
             Route::resource('inventory', InventoryController::class)->only(['index', 'store', 'update', 'destroy']);
@@ -154,6 +156,8 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         });
         Route::middleware('menu.access:po_transactions')->group(function () {
             Route::get('/po-transactions', [PoTransactionController::class, 'index'])->name('po-transactions.index');
+            Route::get('/po-transactions/statement-of-account', [PoTransactionController::class, 'statementOfAccount'])->name('po-transactions.statement-of-account');
+            Route::get('/po-transactions/statement-of-account/pdf', [PoTransactionController::class, 'statementOfAccountPdf'])->name('po-transactions.statement-of-account.pdf');
             Route::patch('/po-transactions/{poTransaction}', [PoTransactionController::class, 'update'])->name('po-transactions.update');
         });
         Route::middleware('menu.access:cycles')->group(function () {
@@ -166,6 +170,12 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::patch('/cycles/{cycle}/end', [CycleController::class, 'endCycle'])->name('cycles.end');
             Route::delete('/cycles/{cycle}', [CycleController::class, 'destroyCycle'])->name('cycles.destroy');
         });
+
+        Route::get('/transfers/pending', [JobOrderTransferController::class, 'pendingIncoming'])->name('transfers.pending');
+        Route::get('/transfers/count', [JobOrderTransferController::class, 'countPending'])->name('transfers.count');
+        Route::post('/transfers/receive', [JobOrderTransferController::class, 'receive'])->name('transfers.receive');
+        Route::post('/transfers/{transfer}/receive-return', [JobOrderTransferController::class, 'receiveReturn'])->name('transfers.receive-return');
+        Route::get('/tags/check', [JobOrderTransferController::class, 'checkTag'])->name('tags.check');
         Route::middleware('menu.access:employees')->group(function () {
             Route::get('/employees', [EmployeeController::class, 'index'])->name('employees.index');
             Route::post('/employees', [EmployeeController::class, 'store'])->name('employees.store');

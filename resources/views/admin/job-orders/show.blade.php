@@ -22,18 +22,26 @@
 <div x-data="{ receiptOpen: false }" class="space-y-4">
     <div class="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">
         <div>
-            <div class="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-smoke px-2.5 py-1 text-xs font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
-                <span data-lucide="jobOrders" class="h-3.5 w-3.5"></span>
-                {{ $order->job_order_number }}
+            <div class="mb-2 flex flex-wrap items-center gap-2">
+                <div class="inline-flex items-center gap-1.5 rounded-md border border-border bg-smoke px-2.5 py-1 text-xs font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
+                    <span data-lucide="jobOrders" class="h-3.5 w-3.5"></span>
+                    {{ $order->job_order_number }}
+                </div>
+                @if($order->tag_number)
+                    <span class="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-900 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-200">
+                        <span data-lucide="tag" class="h-3.5 w-3.5"></span>
+                        TAG #{{ $order->tag_number }}
+                    </span>
+                @endif
             </div>
             <h1 class="text-xl font-semibold tracking-normal">{{ $order->customer?->name }}</h1>
             <p class="text-sm text-muted">{{ $order->branch?->name }} - {{ $order->created_at->format('M d, Y h:i A') }}</p>
             @if($order->processingBranch && (int) $order->processing_branch_id !== (int) $order->branch_id)
-                <p class="text-sm text-muted">Assigned receiving branch: {{ $order->processingBranch->name }}</p>
+                <p class="text-sm text-muted">Assigned processing branch: {{ $order->processingBranch->name }}</p>
                 @if($order->production_accepted_at)
-                    <p class="text-sm text-emerald-600">Received by QR scan {{ $order->production_accepted_at->format('M d, Y h:i A') }}</p>
+                    <p class="text-sm text-emerald-600">Received at {{ $order->processingBranch->name }} on {{ $order->production_accepted_at->format('M d, Y h:i A') }}</p>
                 @else
-                    <p class="text-sm text-amber-600">Waiting for {{ $order->processingBranch->name }} to scan QR before cycle starts.</p>
+                    <p class="text-sm text-amber-600">Waiting for {{ $order->processingBranch->name }} to receive tag into production.</p>
                 @endif
             @endif
             <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
@@ -42,7 +50,21 @@
             @endif
         </div>
 
-        <div class="flex gap-2">
+        <div class="flex flex-wrap gap-2">
+            @php($pendingReturn = $order->transfers->first(fn($t) => $t->transfer_type === 'return' && $t->transfer_status === 'pending'))
+            @if($pendingReturn && (auth()->user()->canManageAllBranches() || (int) auth()->user()->branch_id === (int) $order->branch_id))
+                <form method="POST" action="{{ route('admin.transfers.receive-return', $pendingReturn) }}" class="inline">
+                    @csrf
+                    <button
+                        type="submit"
+                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. Laundry will be ready on shelf for customer pickup.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-md bg-purple-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-purple-700"
+                    >
+                        <span data-lucide="package-open" class="h-4 w-4"></span>
+                        Receive Return
+                    </button>
+                </form>
+            @endif
             <a href="{{ route('admin.job-orders.index') }}" class="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">Back</a>
             <a href="{{ route('admin.job-orders.edit', $order) }}" class="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
                 <span data-lucide="settings" class="h-4 w-4"></span>
@@ -96,6 +118,52 @@
                     @endforelse
                 </div>
             </div>
+
+            @if($order->transfers->isNotEmpty() || $order->tag_number)
+                <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                    <div class="mb-3 flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span data-lucide="git-branch" class="h-4 w-4 text-primary"></span>
+                            <h2 class="text-sm font-semibold">Inter-Branch Transfers & Tracking</h2>
+                        </div>
+                        @if($order->tag_number)
+                            <span class="rounded bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                TAG #{{ $order->tag_number }}
+                            </span>
+                        @endif
+                    </div>
+                    <div class="space-y-3">
+                        @forelse($order->transfers as $transfer)
+                            <div class="rounded-md border border-border p-3 text-sm dark:border-gray-800">
+                                <div class="flex items-center justify-between">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-semibold text-dark dark:text-white">{{ $transfer->originBranch?->name }}</span>
+                                        <span data-lucide="arrow-right" class="h-3.5 w-3.5 text-muted"></span>
+                                        <span class="font-semibold text-dark dark:text-white">{{ $transfer->destinationBranch?->name }}</span>
+                                        <span class="rounded px-1.5 py-0.5 text-[10px] font-bold uppercase {{ $transfer->transfer_type === 'return' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300' }}">
+                                            {{ $transfer->transfer_type }}
+                                        </span>
+                                    </div>
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold {{ $transfer->transfer_status === 'received' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' }}">
+                                        {{ ucfirst($transfer->transfer_status) }}
+                                    </span>
+                                </div>
+                                <div class="mt-2 text-xs text-muted flex flex-wrap gap-x-4 gap-y-1">
+                                    <span>Sent: {{ $transfer->transferred_at?->format('M d, Y h:i A') }} ({{ $transfer->transferredBy?->name ?? 'System' }})</span>
+                                    @if($transfer->received_at)
+                                        <span>Received: {{ $transfer->received_at->format('M d, Y h:i A') }} ({{ $transfer->receivedBy?->name ?? 'Staff' }})</span>
+                                    @endif
+                                </div>
+                                @if($transfer->notes)
+                                    <p class="mt-1 text-xs text-muted italic">{{ $transfer->notes }}</p>
+                                @endif
+                            </div>
+                        @empty
+                            <p class="text-sm text-muted">No transfers recorded.</p>
+                        @endforelse
+                    </div>
+                </div>
+            @endif
         </div>
 
         <aside class="space-y-4">

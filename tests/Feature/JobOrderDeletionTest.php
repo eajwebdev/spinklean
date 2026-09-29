@@ -21,7 +21,7 @@ class JobOrderDeletionTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_delete_button_is_only_visible_to_super_admin(): void
+    public function test_delete_button_is_visible_to_admin_and_super_admin(): void
     {
         [$branch, $order] = $this->jobOrderFixture();
 
@@ -36,7 +36,7 @@ class JobOrderDeletionTest extends TestCase
         $this->actingAs($admin)
             ->get(route('admin.job-orders.index'))
             ->assertOk()
-            ->assertDontSee('Delete job order?');
+            ->assertSee('Delete job order?');
 
         $this->actingAs($superAdmin)
             ->get(route('admin.job-orders.index'))
@@ -44,7 +44,7 @@ class JobOrderDeletionTest extends TestCase
             ->assertSee('Delete job order?');
     }
 
-    public function test_only_super_admin_can_delete_job_order_and_connected_records_are_removed_with_log(): void
+    public function test_admin_can_delete_job_order_and_connected_records_are_removed_with_log(): void
     {
         [$branch, $order, $customer] = $this->jobOrderFixture();
 
@@ -140,14 +140,17 @@ class JobOrderDeletionTest extends TestCase
             'branch_id' => $branch->id,
             'access' => ['job_orders'],
         ]);
+        $cashier = User::factory()->create([
+            'role' => 'cashier',
+            'branch_id' => $branch->id,
+            'access' => ['job_orders'],
+        ]);
 
-        $this->actingAs($admin)
+        $this->actingAs($cashier)
             ->delete(route('admin.job-orders.destroy', $order))
             ->assertForbidden();
 
-        $superAdmin = User::factory()->create(['role' => 'super_admin']);
-
-        $this->actingAs($superAdmin)
+        $this->actingAs($admin)
             ->delete(route('admin.job-orders.destroy', $order))
             ->assertRedirect(route('admin.job-orders.index'));
 

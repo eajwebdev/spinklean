@@ -10,13 +10,16 @@ use App\Models\Payment;
 use App\Support\Activity;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class ReceivableController extends Controller
 {
     private const BILLING_TYPES = ['regular', 'monthly_billing'];
+
     private const UI_BILLING_TYPES = ['regular'];
+
     private const STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
 
     public function index(Request $request)
@@ -32,6 +35,7 @@ class ReceivableController extends Controller
 
         $baseQuery = JobOrder::query()
             ->with(['branch', 'currentBranch', 'releaseBranch', 'customer'])
+            ->financiallyActive()
             ->where('balance', '>', 0)
             ->regularReceivable()
             ->when(! $canChooseBranch, fn ($query) => $query->where(fn ($query) => $query
@@ -76,6 +80,12 @@ class ReceivableController extends Controller
     public function storePayment(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeJobOrder($request, $jobOrder);
+
+        if ($jobOrder->status === 'cancelled') {
+            throw ValidationException::withMessages([
+                'amount' => 'Cancelled job orders cannot receive payments.',
+            ]);
+        }
 
         if ((float) $jobOrder->balance <= 0) {
             throw ValidationException::withMessages([
@@ -173,6 +183,13 @@ class ReceivableController extends Controller
 
     private function nextPaymentNumber(): string
     {
-        return 'PAY-'.now()->format('Ymd').'-'.str_pad((string) (Payment::whereDate('created_at', today())->count() + 1), 4, '0', STR_PAD_LEFT);
+        $prefix = 'PAY-'.now()->format('Ymd').'-';
+        $lastNumber = Payment::withoutGlobalScope('financially_active')
+            ->where('payment_number', 'like', $prefix.'%')
+            ->orderByDesc('payment_number')
+            ->value('payment_number');
+        $sequence = $lastNumber ? ((int) Str::afterLast($lastNumber, '-')) + 1 : 1;
+
+        return $prefix.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
     }
 }

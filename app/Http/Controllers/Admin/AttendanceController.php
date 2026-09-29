@@ -266,7 +266,36 @@ class AttendanceController extends Controller
         $validated = $request->validate([
             'photo' => ['required', 'image', 'mimes:jpg,jpeg,png,webp', 'max:4096'],
             'remarks' => ['nullable', 'string', 'max:500'],
+            'machines' => ['nullable', 'array'],
+            'machines.wash' => ['nullable', 'array'],
+            'machines.wash.*' => ['integer', 'min:1', 'max:100'],
+            'machines.dry' => ['nullable', 'array'],
+            'machines.dry.*' => ['integer', 'min:1', 'max:100'],
         ]);
+
+        $cleanedMachines = null;
+        if ($task->affectsMachineCounter()) {
+            $maxMachines = max(1, (int) $workBranch->machine_count);
+
+            $washSelected = $task->affectsWash() ? array_values(array_unique(array_filter(
+                array_map('intval', (array) $request->input('machines.wash', [])),
+                fn ($m) => $m >= 1 && $m <= $maxMachines
+            ))) : [];
+
+            $drySelected = $task->affectsDry() ? array_values(array_unique(array_filter(
+                array_map('intval', (array) $request->input('machines.dry', [])),
+                fn ($m) => $m >= 1 && $m <= $maxMachines
+            ))) : [];
+
+            if (empty($washSelected) && empty($drySelected)) {
+                return back()->withErrors(['machines' => 'Please select at least one machine that was cleaned for this task.'])->withInput();
+            }
+
+            $cleanedMachines = [
+                'wash' => $washSelected,
+                'dry' => $drySelected,
+            ];
+        }
 
         $workDate = today()->toDateString();
         $path = PublicUpload::store($request->file('photo'), 'daily-tasks');
@@ -287,6 +316,7 @@ class AttendanceController extends Controller
                 'completed_by_employee_id' => $employee->id,
                 'photo_path' => $path,
                 'remarks' => $validated['remarks'] ?? null,
+                'cleaned_machines' => $cleanedMachines,
                 'completed_at' => now(),
             ]
         );

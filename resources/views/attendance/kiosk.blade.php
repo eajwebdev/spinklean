@@ -123,6 +123,9 @@
                     <div class="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain pr-1">
                         @forelse($dailyTasks as $task)
                             @php($completion = $task->completions->first())
+                            @php($kioskMachineCount = max(1, (int) ($workBranch->machine_count ?? 1)))
+                            @php($selectedWash = old('machines.wash', $completion?->cleanedWashMachines() ?? []))
+                            @php($selectedDry = old('machines.dry', $completion?->cleanedDryMachines() ?? []))
                             <div class="rounded-xl border border-border bg-white p-2.5 shadow-sm dark:border-gray-800 dark:bg-gray-950">
                                 <button type="button" @click="openTaskId = openTaskId === {{ $task->id }} ? null : {{ $task->id }}; refreshIcons()" class="flex w-full items-center justify-between gap-3 text-left">
                                     <span class="flex min-w-0 items-center gap-2.5">
@@ -131,6 +134,11 @@
                                         </span>
                                         <span class="min-w-0">
                                             <span class="block truncate text-sm font-semibold">{{ $task->name }}</span>
+                                            @if($task->affectsMachineCounter())
+                                                <span class="inline-block text-[10px] font-bold text-blue-600 dark:text-blue-400">
+                                                    {{ $task->machineImpactLabel() }}
+                                                </span>
+                                            @endif
                                             <span class="block text-[10px] text-muted">{{ $completion ? 'Completed '.$completion->completed_at?->format('h:i A') : 'Tap to upload proof' }}</span>
                                         </span>
                                     </span>
@@ -141,7 +149,45 @@
                                     @csrf
                                     @if($completion)
                                         <a href="{{ \App\Support\PublicUpload::url($completion->photo_path) }}" target="_blank" class="block text-xs font-semibold text-primary">View current proof</a>
+                                        @if($completion->hasCleanedMachines())
+                                            <div class="rounded-lg bg-blue-50 p-2 text-[11px] font-medium text-blue-900 dark:bg-blue-950/40 dark:text-blue-200">
+                                                Cleaned: {{ $completion->cleanedMachinesSummary() }} (+1 in Z Reading)
+                                            </div>
+                                        @endif
                                     @endif
+
+                                    @if($task->affectsMachineCounter())
+                                        <div class="rounded-lg border border-dashed border-blue-200 bg-blue-50/40 p-2.5 text-xs dark:border-blue-900/50 dark:bg-blue-950/20">
+                                            <p class="font-bold text-blue-900 dark:text-blue-200 mb-1.5">Select Cleaned Machines (+1 cycle):</p>
+                                            @if($task->affectsWash())
+                                                <div class="mb-2">
+                                                    <span class="block text-[10px] font-bold uppercase text-muted mb-1">Washers:</span>
+                                                    <div class="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                                                        @for($m = 1; $m <= $kioskMachineCount; $m++)
+                                                            <label class="flex items-center gap-1.5 rounded-md border border-border bg-white px-2 py-1.5 text-xs font-medium dark:border-gray-800 dark:bg-gray-900">
+                                                                <input type="checkbox" name="machines[wash][]" value="{{ $m }}" @checked(in_array($m, $selectedWash)) class="rounded border-border text-primary">
+                                                                <span>Wash {{ $m }}</span>
+                                                            </label>
+                                                        @endfor
+                                                    </div>
+                                                </div>
+                                            @endif
+                                            @if($task->affectsDry())
+                                                <div>
+                                                    <span class="block text-[10px] font-bold uppercase text-muted mb-1">Dryers:</span>
+                                                    <div class="grid grid-cols-2 gap-1 sm:grid-cols-4">
+                                                        @for($m = 1; $m <= $kioskMachineCount; $m++)
+                                                            <label class="flex items-center gap-1.5 rounded-md border border-border bg-white px-2 py-1.5 text-xs font-medium dark:border-gray-800 dark:bg-gray-900">
+                                                                <input type="checkbox" name="machines[dry][]" value="{{ $m }}" @checked(in_array($m, $selectedDry)) class="rounded border-border text-primary">
+                                                                <span>Dry {{ $m }}</span>
+                                                            </label>
+                                                        @endfor
+                                                    </div>
+                                                </div>
+                                            @endif
+                                        </div>
+                                    @endif
+
                                     <input type="file" name="photo" accept="image/*" capture="environment" required class="w-full rounded-lg border border-border bg-white px-2 py-2 text-xs dark:border-gray-800 dark:bg-gray-900">
                                     <div class="grid grid-cols-[1fr_auto] gap-2">
                                         <input name="remarks" placeholder="Optional remarks" class="h-10 min-w-0 rounded-lg border border-border bg-white px-3 text-xs dark:border-gray-800 dark:bg-gray-900">

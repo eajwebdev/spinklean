@@ -111,6 +111,7 @@ class BranchController extends Controller
         $validated = $request->validate($this->taskRules($branch));
         $validated['branch_id'] = $branch->id;
         $validated['requires_photo'] = $request->boolean('requires_photo', true);
+        $validated['affects_machine_counter'] = $request->input('affects_machine_counter', 'none') ?: 'none';
         $validated['is_active'] = $request->boolean('is_active', true);
 
         DailyTask::create($validated);
@@ -124,6 +125,7 @@ class BranchController extends Controller
 
         $validated = $request->validate($this->taskRules($branch, $task));
         $validated['requires_photo'] = $request->boolean('requires_photo');
+        $validated['affects_machine_counter'] = $request->input('affects_machine_counter', 'none') ?: 'none';
         $validated['is_active'] = $request->boolean('is_active');
 
         $task->update($validated);
@@ -189,6 +191,7 @@ class BranchController extends Controller
         return [
             'name' => ['required', 'string', 'max:255', $nameRule],
             'requires_photo' => ['nullable', 'boolean'],
+            'affects_machine_counter' => ['nullable', 'string', Rule::in(['none', 'wash', 'dry', 'both'])],
             'is_active' => ['nullable', 'boolean'],
         ];
     }

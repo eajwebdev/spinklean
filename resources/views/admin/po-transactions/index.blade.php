@@ -32,6 +32,10 @@
             <h1 class="text-xl font-semibold">PO Transactions</h1>
             <p class="text-sm text-muted">Track purchase order billing separately from cashier unpaid orders.</p>
         </div>
+        <a href="{{ route('admin.po-transactions.statement-of-account', request()->except('page', 'search')) }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
+            <span data-lucide="file-text" class="h-4 w-4"></span>
+            Statement of Account
+        </a>
     </div>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -70,6 +74,13 @@
             @else
                 <input type="hidden" name="branch_id" value="{{ auth()->user()->branch_id }}">
             @endif
+
+            <select name="customer_id" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950 md:w-56">
+                <option value="">All PO customers</option>
+                @foreach($customers as $customer)
+                    <option value="{{ $customer->id }}" @selected((int) request('customer_id') === (int) $customer->id)>{{ $customer->name }}</option>
+                @endforeach
+            </select>
 
             <select name="status" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950 md:w-48">
                 <option value="">All status</option>
@@ -136,6 +147,14 @@
                                 <span class="{{ \App\Support\StatusBadge::classes($transaction->status) }}">{{ \App\Support\StatusBadge::label($transaction->status) }}</span>
                             </td>
                             <td class="px-4 py-3 text-right">
+                                <a href="{{ route('admin.po-transactions.statement-of-account', array_filter([
+                                    'branch_id' => $transaction->branch_id,
+                                    'customer_id' => $transaction->customer_id,
+                                    'date_from' => $dateFrom,
+                                    'date_to' => $dateTo,
+                                ])) }}" title="Statement of account" aria-label="View statement of account" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                                    <span data-lucide="file-text" class="h-4 w-4"></span>
+                                </a>
                                 <button type="button" @click="historyOpen = {{ $transaction->id }}" title="Payment history" aria-label="View PO payment history" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                     <span data-lucide="payments" class="h-4 w-4"></span>
                                 </button>

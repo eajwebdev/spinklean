@@ -156,7 +156,15 @@
 
                         <form method="POST" action="{{ route('admin.branches.daily-tasks.store', $branch) }}" class="space-y-2">
                             @csrf
-                            <input name="name" placeholder="Task name" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <input name="name" placeholder="Task name (e.g. Machine tub cleaning)" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                                <select name="affects_machine_counter" class="h-9 w-full rounded-md border border-border bg-white px-3 text-xs dark:border-gray-800 dark:bg-gray-950">
+                                    <option value="none">No machine counter effect</option>
+                                    <option value="wash">Washers (+1 Wash cycle in Z Reading)</option>
+                                    <option value="dry">Dryers (+1 Dry cycle in Z Reading)</option>
+                                    <option value="both">Both Washers & Dryers (+1 cycle)</option>
+                                </select>
+                            </div>
                             <div class="flex flex-wrap items-center justify-between gap-2">
                                 <label class="inline-flex items-center gap-2 text-sm text-muted">
                                     <input type="checkbox" name="requires_photo" value="1" checked class="rounded border-border text-primary">
@@ -176,12 +184,27 @@
                                     <form method="POST" action="{{ route('admin.branches.daily-tasks.update', [$branch, $task]) }}" class="space-y-2">
                                         @csrf
                                         @method('PUT')
-                                        <input name="name" value="{{ $task->name }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                            <input name="name" value="{{ $task->name }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                                            <select name="affects_machine_counter" class="h-9 w-full rounded-md border border-border bg-white px-3 text-xs dark:border-gray-800 dark:bg-gray-950">
+                                                <option value="none" @selected(($task->affects_machine_counter ?? 'none') === 'none')>No machine counter effect</option>
+                                                <option value="wash" @selected(($task->affects_machine_counter ?? 'none') === 'wash')>Washers (+1 Wash cycle in Z Reading)</option>
+                                                <option value="dry" @selected(($task->affects_machine_counter ?? 'none') === 'dry')>Dryers (+1 Dry cycle in Z Reading)</option>
+                                                <option value="both" @selected(($task->affects_machine_counter ?? 'none') === 'both')>Both Washers & Dryers (+1 cycle)</option>
+                                            </select>
+                                        </div>
                                         <div class="flex flex-wrap items-center justify-between gap-2">
-                                            <label class="inline-flex items-center gap-2 text-sm text-muted">
-                                                <input type="checkbox" name="requires_photo" value="1" @checked($task->requires_photo) class="rounded border-border text-primary">
-                                                Requires photo
-                                            </label>
+                                            <div class="flex items-center gap-3">
+                                                <label class="inline-flex items-center gap-2 text-sm text-muted">
+                                                    <input type="checkbox" name="requires_photo" value="1" @checked($task->requires_photo) class="rounded border-border text-primary">
+                                                    Requires photo
+                                                </label>
+                                                @if(($task->affects_machine_counter ?? 'none') !== 'none')
+                                                    <span class="inline-flex items-center rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700 dark:bg-blue-950 dark:text-blue-300">
+                                                        {{ $task->machineImpactLabel() }}
+                                                    </span>
+                                                @endif
+                                            </div>
                                             <input type="hidden" name="is_active" value="1">
                                             <button class="inline-flex h-8 items-center gap-2 rounded-md border border-border px-3 text-xs font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
                                                 <span data-lucide="check" class="h-3.5 w-3.5"></span>

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\AccountsPayable;
 use App\Models\Branch;
 use App\Models\BranchExpense;
 use App\Models\Customer;
@@ -16,9 +17,8 @@ use App\Models\MoneyMovement;
 use App\Models\Payment;
 use App\Models\SystemSetting;
 use App\Models\ZReading;
-use App\Models\AccountsPayable;
-use App\Support\StatusBadge;
 use App\Support\FinancialReconciliation;
+use App\Support\StatusBadge;
 use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -114,7 +114,7 @@ class DashboardController extends Controller
 
         $salesTotal = (float) (clone $payments)->sum('amount');
         $collectionsTotal = $financial['physical_collections'];
-        $ordersCount = (clone $ordersInRange)->count();
+        $ordersCount = (clone $ordersInRange)->financiallyActive()->count();
         $openOrders = (clone $orders)->whereNotIn('status', ['completed', 'cancelled'])->count();
         $readyForPickup = (clone $orders)->where('status', 'ready_for_pickup')->count();
         $readyForDelivery = (clone $orders)->where('status', 'ready_for_delivery')->count();
@@ -207,6 +207,7 @@ class DashboardController extends Controller
             ]);
 
         $recentOrders = (clone $orders)
+            ->financiallyActive()
             ->with(['customer', 'branch'])
             ->latest()
             ->limit(6)
@@ -362,6 +363,7 @@ class DashboardController extends Controller
         $period = Carbon::parse($dateFrom)->format('M d, Y').' to '.Carbon::parse($dateTo)->format('M d, Y');
 
         $orders = JobOrder::query()
+            ->financiallyActive()
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->whereDate('created_at', '>=', $dateFrom)
             ->whereDate('created_at', '<=', $dateTo);
@@ -639,6 +641,7 @@ class DashboardController extends Controller
     {
         $rows = JobOrder::query()
             ->join('customers', 'job_orders.customer_id', '=', 'customers.id')
+            ->financiallyActive()
             ->when($branchId, fn ($query) => $query->where('job_orders.branch_id', $branchId))
             ->whereDate('job_orders.created_at', '>=', $dateFrom)
             ->whereDate('job_orders.created_at', '<=', $dateTo)
@@ -664,7 +667,7 @@ class DashboardController extends Controller
             return $this->salesAssistant(
                 Payment::query()->where('branch_id', $request->user()->branch_id)->whereDate('paid_at', '>=', $dateFrom)->whereDate('paid_at', '<=', $dateTo),
                 Payment::query()->where('collected_branch_id', $request->user()->branch_id)->whereIn('payment_type', ['cash', 'gcash', 'bank'])->whereDate('paid_at', '>=', $dateFrom)->whereDate('paid_at', '<=', $dateTo),
-                JobOrder::query()->where('branch_id', $request->user()->branch_id)->whereDate('created_at', '>=', $dateFrom)->whereDate('created_at', '<=', $dateTo),
+                JobOrder::query()->financiallyActive()->where('branch_id', $request->user()->branch_id)->whereDate('created_at', '>=', $dateFrom)->whereDate('created_at', '<=', $dateTo),
                 $currency
             );
         }
