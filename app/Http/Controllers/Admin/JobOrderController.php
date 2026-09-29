@@ -10,6 +10,7 @@ use App\Models\CustomerLedger;
 use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\JobOrder;
+use App\Models\JobOrderTransfer;
 use App\Models\LaundryService;
 use App\Models\LaundryServiceCategory;
 use App\Models\Payment;
@@ -19,6 +20,7 @@ use App\Models\SystemSetting;
 use App\Models\User;
 use App\Support\Activity;
 use App\Support\SmsNotifier;
+use App\Support\TagValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -28,14 +30,14 @@ use Illuminate\Validation\ValidationException;
 
 class JobOrderController extends Controller
 {
-    private const STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+    private const STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
 
     public function index(Request $request)
     {
         $user = $request->user();
         [$dateFrom, $dateTo] = $this->dateRange($request);
 
-        $ordersQuery = JobOrder::with(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'items', 'payments.receiver', 'payments.collectedBranch', 'poTransaction'])
+        $ordersQuery = JobOrder::with(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'items', 'payments.receiver', 'payments.collectedBranch', 'poTransaction', 'transfers.destinationBranch'])
             ->when($user->role !== 'super_admin' && $user->role !== 'admin', fn ($q) => $q->where('branch_id', $user->branch_id))
             ->when($dateFrom, fn ($q) => $q->whereDate('created_at', '>=', $dateFrom))
             ->when($dateTo, fn ($q) => $q->whereDate('created_at', '<=', $dateTo))
@@ -43,6 +45,7 @@ class JobOrderController extends Controller
                 $search = $request->search;
                 $q->where(fn ($query) => $query
                     ->where('job_order_number', 'like', "%{$search}%")
+                    ->orWhere('tag_number', 'like', "%{$search}%")
                     ->orWhereHas('customer', fn ($q) => $q->where('name', 'like', "%{$search}%")));
             });
 
@@ -79,7 +82,7 @@ class JobOrderController extends Controller
     {
         $this->authorizeJobOrder($request, $jobOrder);
 
-        $jobOrder->load(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'creator', 'items.service', 'payments.receiver', 'payments.collectedBranch', 'cycles.user']);
+        $jobOrder->load(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'creator', 'items.service', 'payments.receiver', 'payments.collectedBranch', 'cycles.user', 'transfers.destinationBranch', 'transfers.originBranch', 'transfers.transferredBy', 'transfers.receivedBy']);
 
         return view('admin.job-orders.show', [
             'order' => $jobOrder,
@@ -125,6 +128,7 @@ class JobOrderController extends Controller
         $branches = Branch::where('is_active', true)->orderBy('name')->get();
         $processingBranches = Branch::where('is_active', true)
             ->where('branch_type', 'full_service')
+            ->where('machine_count', '>', 0)
             ->orderBy('name')
             ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
         $customers = Customer::where('is_active', true)
@@ -251,6 +255,7 @@ class JobOrderController extends Controller
 
         $processingBranches = Branch::where('is_active', true)
             ->where('branch_type', 'full_service')
+            ->where('machine_count', '>', 0)
             ->orderBy('name')
             ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
 
@@ -274,6 +279,7 @@ class JobOrderController extends Controller
         $validated = $request->validate([
             'branch_id' => ['required', 'exists:branches,id'],
             'processing_branch_id' => ['nullable', 'exists:branches,id'],
+            'tag_number' => ['nullable', 'string', 'max:100'],
             'customer_id' => ['required', 'exists:customers,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.laundry_service_id' => ['nullable', 'exists:laundry_services,id'],
@@ -297,6 +303,26 @@ class JobOrderController extends Controller
         }
 
         $originBranch = Branch::query()->findOrFail($validated['branch_id']);
+
+        if ($originBranch->isNoMachine()) {
+            if (empty(trim((string) ($validated['tag_number'] ?? '')))) {
+                throw ValidationException::withMessages([
+                    'tag_number' => 'Tag Number is required for drop-off orders.',
+                ]);
+            }
+            if (empty($validated['processing_branch_id'])) {
+                throw ValidationException::withMessages([
+                    'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
+                ]);
+            }
+        }
+
+        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            $validated['tag_number'] = TagValidator::validate($validated['tag_number']);
+        } else {
+            $validated['tag_number'] = null;
+        }
+
         $validated['processing_branch_id'] = $this->resolveProcessingBranchId($originBranch, $validated['processing_branch_id'] ?? null, $user);
 
         $customerBelongsToBranch = Customer::query()
@@ -326,7 +352,7 @@ class JobOrderController extends Controller
         }
 
         $createdOrder = null;
-        $response = DB::transaction(function () use ($request, $validated, $selectedServices, $user, &$createdOrder) {
+        $response = DB::transaction(function () use ($request, $validated, $selectedServices, $user, $originBranch, &$createdOrder) {
             $settings = SystemSetting::current();
             $subtotal = collect($validated['items'])->sum(fn ($item) => (float) $item['quantity'] * (float) $item['unit_price']);
             $discount = min((float) ($validated['discount'] ?? 0), $subtotal);
@@ -352,6 +378,7 @@ class JobOrderController extends Controller
                 'customer_id' => $validated['customer_id'],
                 'created_by' => $user->id,
                 'job_order_number' => $this->nextJobOrderNumber((int) $validated['branch_id']),
+                'tag_number' => $validated['tag_number'],
                 'status' => 'pending',
                 'transaction_type' => $validated['transaction_type'] ?? 'walk_in',
                 'is_rush' => (bool) ($validated['is_rush'] ?? false),
@@ -374,6 +401,21 @@ class JobOrderController extends Controller
                     'quantity' => $item['quantity'],
                     'unit_price' => $item['unit_price'],
                     'total' => (float) $item['quantity'] * (float) $item['unit_price'],
+                ]);
+            }
+
+            if ($order->isTransferred()) {
+                JobOrderTransfer::create([
+                    'job_order_id' => $order->id,
+                    'job_order_number' => $order->job_order_number,
+                    'tag_number' => $order->tag_number,
+                    'origin_branch_id' => $order->branch_id,
+                    'destination_branch_id' => $order->processing_branch_id,
+                    'transfer_type' => 'outbound',
+                    'transfer_status' => 'pending',
+                    'transferred_at' => now(),
+                    'transferred_by' => $user->id,
+                    'notes' => 'Transferred from '.$originBranch->name.' for off-site processing',
                 ]);
             }
 
@@ -456,6 +498,7 @@ class JobOrderController extends Controller
         $validated = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
             'processing_branch_id' => ['nullable', 'exists:branches,id'],
+            'tag_number' => ['nullable', 'string', 'max:100'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.laundry_service_id' => ['nullable', 'exists:laundry_services,id'],
             'items.*.service_preset_id' => ['nullable', 'exists:service_presets,id'],
@@ -468,6 +511,20 @@ class JobOrderController extends Controller
             'is_rush' => ['nullable', 'boolean'],
             'notes' => ['nullable', 'string'],
         ]);
+
+        if ($jobOrder->branch?->isNoMachine()) {
+            if (empty(trim((string) ($validated['tag_number'] ?? $jobOrder->tag_number)))) {
+                throw ValidationException::withMessages([
+                    'tag_number' => 'Tag Number is required for drop-off orders.',
+                ]);
+            }
+        }
+
+        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            $validated['tag_number'] = TagValidator::validate($validated['tag_number'], $jobOrder->id);
+        } else {
+            $validated['tag_number'] = $jobOrder->tag_number;
+        }
 
         $customerBelongsToBranch = Customer::query()
             ->whereKey($validated['customer_id'])
@@ -529,6 +586,7 @@ class JobOrderController extends Controller
             $orderUpdates = [
                 'customer_id' => $validated['customer_id'],
                 'processing_branch_id' => $validated['processing_branch_id'],
+                'tag_number' => $validated['tag_number'],
                 'status' => $validated['status'],
                 'transaction_type' => $validated['transaction_type'] ?? 'walk_in',
                 'is_rush' => (bool) ($validated['is_rush'] ?? false),
@@ -552,6 +610,31 @@ class JobOrderController extends Controller
                     'returned_to_branch_at' => null,
                     'released_at' => null,
                 ];
+
+                // Cancel any previous pending outbound transfers
+                $jobOrder->transfers()
+                    ->where('transfer_status', 'pending')
+                    ->where('transfer_type', 'outbound')
+                    ->update(['transfer_status' => 'cancelled']);
+
+                // Create new outbound transfer
+                JobOrderTransfer::create([
+                    'job_order_id' => $jobOrder->id,
+                    'job_order_number' => $jobOrder->job_order_number,
+                    'tag_number' => $validated['tag_number'],
+                    'origin_branch_id' => $jobOrder->branch_id,
+                    'destination_branch_id' => $validated['processing_branch_id'],
+                    'transfer_type' => 'outbound',
+                    'transfer_status' => 'pending',
+                    'transferred_at' => now(),
+                    'transferred_by' => $request->user()?->id,
+                    'notes' => 'Reassigned to new processing branch',
+                ]);
+            } elseif ($validated['tag_number'] !== $jobOrder->tag_number) {
+                // Update tag on any active pending transfers
+                $jobOrder->transfers()
+                    ->where('transfer_status', 'pending')
+                    ->update(['tag_number' => $validated['tag_number']]);
             }
 
             if (in_array($validated['status'], ['ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'], true)) {
@@ -669,6 +752,10 @@ class JobOrderController extends Controller
                 'inventory_deducted_at' => null,
             ]);
 
+            $jobOrder->transfers()
+                ->where('transfer_status', 'pending')
+                ->update(['transfer_status' => 'cancelled']);
+
             $this->recalculateCustomerLedger((int) $jobOrder->customer_id);
 
             Activity::log($request, 'job_order_cancelled', $jobOrder, [
@@ -739,6 +826,12 @@ class JobOrderController extends Controller
 
         abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
+
+        $jobOrder->loadMissing(['customer', 'poTransaction']);
+        if ((float) $jobOrder->balance > 0 && ! $jobOrder->poTransaction && $jobOrder->customer?->billing_type !== 'po') {
+            $unpaidLimit = (float) ($jobOrder->customer?->unpaid_limit ?? 0);
+            abort_if((float) $jobOrder->balance > $unpaidLimit, 422, 'Cannot release laundry with unpaid balance of ₱'.number_format($jobOrder->balance, 2).'. Payment must be verified and collected first.');
+        }
 
         $jobOrder->endActiveCycles();
 
@@ -846,11 +939,11 @@ class JobOrderController extends Controller
             ->where('is_active', true)
             ->first();
 
-        abort_unless($productionBranch && $productionBranch->isFullService(), 403);
+        abort_unless($productionBranch && $productionBranch->isMachineEquipped(), 403);
         abort_if(in_array($jobOrder->status, ['completed', 'cancelled'], true), 422, 'Completed or cancelled job orders cannot be accepted for production.');
 
         $jobOrder->loadMissing('branch');
-        abort_unless($jobOrder->branch?->isPickupDropoff(), 422, 'Only pickup/drop-off orders can be accepted by production scan.');
+        abort_unless($jobOrder->branch?->isNoMachine(), 422, 'Only pickup/drop-off orders can be accepted by production scan.');
 
         $assignedProductionId = $jobOrder->processing_branch_id ?: null;
         abort_unless((int) $assignedProductionId === (int) $productionBranch->id, 403, 'This laundry is assigned to another production branch.');
@@ -862,9 +955,23 @@ class JobOrderController extends Controller
             'This job order already has production cycles in another branch.'
         );
 
+        $transfer = JobOrderTransfer::where('job_order_id', $jobOrder->id)
+            ->where('destination_branch_id', $productionBranch->id)
+            ->where('transfer_status', 'pending')
+            ->first();
+
+        if ($transfer) {
+            $transfer->update([
+                'transfer_status' => 'received',
+                'received_at' => now(),
+                'received_by' => $request->user()?->id,
+            ]);
+        }
+
         $jobOrder->update([
             'current_branch_id' => $productionBranch->id,
             'release_branch_id' => $productionBranch->id,
+            'status' => in_array($jobOrder->status, ['pending', 'received'], true) ? 'received' : $jobOrder->status,
             'production_accepted_at' => $jobOrder->production_accepted_at ?: now(),
             'returned_to_branch_at' => null,
         ]);
@@ -930,35 +1037,52 @@ class JobOrderController extends Controller
 
     private function resolveProcessingBranchId(Branch $originBranch, ?int $processingBranchId, User $user): int
     {
-        if (! $user->canManageAllBranches() && $originBranch->isFullService()) {
+        if ($originBranch->isFullService() && ! $user->canManageAllBranches()) {
             return (int) $originBranch->id;
         }
 
-        if ($originBranch->isPickupDropoff()) {
-            $processingBranchId = $processingBranchId ?: (int) Branch::query()
+        if ($originBranch->isNoMachine()) {
+            if (! $processingBranchId || (int) $processingBranchId === (int) $originBranch->id) {
+                throw ValidationException::withMessages([
+                    'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
+                ]);
+            }
+
+            $processingBranch = Branch::query()
+                ->whereKey($processingBranchId)
                 ->where('is_active', true)
-                ->where('branch_type', 'full_service')
-                ->value('id');
-        } else {
-            $processingBranchId = $processingBranchId ?: (int) $originBranch->id;
+                ->where('machine_count', '>', 0)
+                ->first();
+
+            if (! $processingBranch || $processingBranch->isNoMachine()) {
+                throw ValidationException::withMessages([
+                    'processing_branch_id' => 'Please choose an active machine-equipped branch for processing.',
+                ]);
+            }
+
+            return (int) $processingBranch->id;
+        }
+
+        if (! $processingBranchId || (int) $processingBranchId === (int) $originBranch->id) {
+            return (int) $originBranch->id;
         }
 
         $processingBranch = Branch::query()
             ->whereKey($processingBranchId)
             ->where('is_active', true)
-            ->where('branch_type', 'full_service')
+            ->where('machine_count', '>', 0)
             ->first();
 
-        if (! $processingBranch) {
+        if (! $processingBranch || $processingBranch->isNoMachine()) {
             throw ValidationException::withMessages([
-                'processing_branch_id' => 'Please choose an active full-service branch for production.',
+                'processing_branch_id' => 'Please choose an active machine-equipped branch for processing.',
             ]);
         }
 
         return (int) $processingBranch->id;
     }
 
-    private function deductInventoryForOrder(JobOrder $order, array $items, ?int $userId): void
+    public function deductInventoryForOrder(JobOrder $order, array $items, ?int $userId): void
     {
         $serviceIds = collect($items)->pluck('laundry_service_id')->unique()->values();
 

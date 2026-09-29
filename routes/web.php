@@ -12,6 +12,7 @@ use App\Http\Controllers\Admin\EmployeeController;
 use App\Http\Controllers\Admin\ExpenseController;
 use App\Http\Controllers\Admin\InventoryController;
 use App\Http\Controllers\Admin\JobOrderController;
+use App\Http\Controllers\Admin\JobOrderTransferController;
 use App\Http\Controllers\Admin\LaundryServiceCategoryController;
 use App\Http\Controllers\Admin\LaundryServiceController;
 use App\Http\Controllers\Admin\PaymentController;
@@ -169,6 +170,12 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::patch('/cycles/{cycle}/end', [CycleController::class, 'endCycle'])->name('cycles.end');
             Route::delete('/cycles/{cycle}', [CycleController::class, 'destroyCycle'])->name('cycles.destroy');
         });
+
+        Route::get('/transfers/pending', [JobOrderTransferController::class, 'pendingIncoming'])->name('transfers.pending');
+        Route::get('/transfers/count', [JobOrderTransferController::class, 'countPending'])->name('transfers.count');
+        Route::post('/transfers/receive', [JobOrderTransferController::class, 'receive'])->name('transfers.receive');
+        Route::post('/transfers/{transfer}/receive-return', [JobOrderTransferController::class, 'receiveReturn'])->name('transfers.receive-return');
+        Route::get('/tags/check', [JobOrderTransferController::class, 'checkTag'])->name('tags.check');
         Route::middleware('menu.access:employees')->group(function () {
             Route::get('/employees', [EmployeeController::class, 'index'])->name('employees.index');
             Route::post('/employees', [EmployeeController::class, 'store'])->name('employees.store');

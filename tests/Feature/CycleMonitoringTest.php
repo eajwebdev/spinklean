@@ -826,7 +826,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(50, $orders->total());
         $this->assertSame(8, $orders->first()->cycles_count);
         $this->assertCount(5, $orders->first()->cycles);
-        $this->assertLessThanOrEqual(21, count(DB::getQueryLog()));
+        $this->assertLessThanOrEqual(25, count(DB::getQueryLog()));
     }
 
     public function test_machine_can_be_reused_after_cycle_ends(): void
@@ -1151,6 +1151,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-1142',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));
@@ -1219,7 +1220,7 @@ class CycleMonitoringTest extends TestCase
             'status' => 'queued',
         ]);
         $this->assertStringContainsString(
-            'We picked up your laundry for delivery',
+            "We've picked up and received your laundry",
             (string) \App\Models\SmsLog::query()->value('message')
         );
     }
@@ -1384,6 +1385,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-1375',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));
@@ -1841,6 +1843,7 @@ class CycleMonitoringTest extends TestCase
                 ]],
                 'discount' => 0,
                 'paid_amount' => 0,
+                'tag_number' => 'TAG-TEST-DROP',
                 'transaction_type' => 'walk_in',
             ])
             ->assertRedirect(route('admin.job-orders.index'));

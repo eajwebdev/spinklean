@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\CycleRecord;
 use App\Models\JobOrder;
+use App\Models\JobOrderTransfer;
 use App\Models\ZReading;
 use App\Support\Activity;
 use App\Support\SmsNotifier;
@@ -21,7 +22,7 @@ class CycleController extends Controller
 
     private const CYCLE_HISTORY_LIMIT = 5;
 
-    private const FILTER_STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
+    private const FILTER_STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
 
     private const CYCLE_TYPES = [
         'wash' => 'Washing',
@@ -60,6 +61,7 @@ class CycleController extends Controller
         $selectedStatus = in_array($request->status, self::FILTER_STATUSES, true) ? $request->status : null;
         $statusLabels = [
             'pending' => 'Pending',
+            'received' => 'Received',
             'washing' => 'Washing',
             'drying' => 'Drying',
             'folding' => 'Folding / Ironing',
@@ -120,6 +122,7 @@ class CycleController extends Controller
 
                 $q->where(fn ($query) => $query
                     ->where('job_order_number', 'like', "%{$search}%")
+                    ->orWhere('tag_number', 'like', "%{$search}%")
                     ->orWhereHas('customer', fn ($query) => $query->where('name', 'like', "%{$search}%")
                         ->orWhere('phone', 'like', "%{$search}%")));
             });
@@ -133,6 +136,7 @@ class CycleController extends Controller
                 'release_branch_id',
                 'customer_id',
                 'job_order_number',
+                'tag_number',
                 'status',
                 'transaction_type',
                 'is_rush',
@@ -364,15 +368,36 @@ class CycleController extends Controller
                 'released_at' => null,
             ]);
 
+            JobOrderTransfer::create([
+                'job_order_id' => $jobOrder->id,
+                'job_order_number' => $jobOrder->job_order_number,
+                'tag_number' => $jobOrder->tag_number,
+                'origin_branch_id' => $request->user()->branch_id ?: $processingBranchId,
+                'destination_branch_id' => $jobOrder->branch_id,
+                'transfer_type' => 'return',
+                'transfer_status' => 'pending',
+                'transferred_at' => now(),
+                'transferred_by' => $request->user()->id,
+                'notes' => 'Returned to drop-off branch for customer pickup',
+            ]);
+
             Activity::log($request, 'job_order_returned_to_dropoff', $jobOrder, [
                 'job_order_number' => $jobOrder->job_order_number,
+                'tag_number' => $jobOrder->tag_number,
                 'dropoff_branch_id' => $jobOrder->branch_id,
+                'processing_branch_id' => $processingBranchId,
             ], $jobOrder->branch_id);
 
             return back()->with('success', 'Laundry returned to drop-off branch for release.');
         }
 
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
+
+        $jobOrder->loadMissing(['customer', 'poTransaction']);
+        if ((float) $jobOrder->balance > 0 && ! $jobOrder->poTransaction && $jobOrder->customer?->billing_type !== 'po') {
+            $unpaidLimit = (float) ($jobOrder->customer?->unpaid_limit ?? 0);
+            abort_if((float) $jobOrder->balance > $unpaidLimit, 422, 'Cannot release laundry with unpaid balance of ₱'.number_format($jobOrder->balance, 2).'. Payment must be verified and collected first.');
+        }
 
         $jobOrder->endActiveCycles();
 
@@ -385,6 +410,7 @@ class CycleController extends Controller
 
         Activity::log($request, 'job_order_released', $jobOrder, [
             'job_order_number' => $jobOrder->job_order_number,
+            'tag_number' => $jobOrder->tag_number,
             'release_branch_id' => $jobOrder->release_branch_id,
         ], $jobOrder->release_branch_id);
 
@@ -397,6 +423,10 @@ class CycleController extends Controller
     public function storeCycle(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeOrder($request, $jobOrder);
+
+        $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
+        abort_if($processingBranch?->isNoMachine(), 403, 'This branch has no machines to run cycles.');
+        abort_if($request->user()->branch?->isNoMachine() && ! $request->user()->canManageAllBranches(), 403, 'No-machine branches cannot perform cycle monitoring.');
 
         if ($request->filled('machine_number') && ! $request->filled('machine_numbers')) {
             $request->merge(['machine_numbers' => [(int) $request->input('machine_number')]]);
