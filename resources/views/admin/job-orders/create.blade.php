@@ -94,9 +94,21 @@
                                 <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
                                 <select name="processing_branch_id" x-model="processingBranchId" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" :required="isNoMachineBranch">
                                     <template x-for="branch in availableProcessingBranches" :key="branch.id">
-                                        <option :value="branch.id" x-text="branch.name"></option>
+                                        <option :value="branch.id" :selected="String(branch.id) === String(processingBranchId)" x-text="`${branch.name} (${customersTodayLabel(branch)})`"></option>
                                     </template>
                                 </select>
+                            </div>
+                            <div class="flex flex-wrap gap-1" x-show="availableProcessingBranches.length > 1">
+                                <template x-for="branch in availableProcessingBranches" :key="'load-' + branch.id">
+                                    <button
+                                        type="button"
+                                        @click="processingBranchId = branch.id"
+                                        class="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                                        :class="String(branch.id) === String(processingBranchId) ? 'bg-primary text-white' : 'bg-smoke text-muted dark:bg-gray-800'"
+                                        :title="`${branch.orders_today ?? 0} job order(s) today`"
+                                        x-text="`${branch.code || branch.name}: ${customersTodayLabel(branch)}`"
+                                    ></button>
+                                </template>
                             </div>
                         </div>
                     @else
@@ -549,6 +561,10 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         },
         get availableProcessingBranches() {
             return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
+        },
+        customersTodayLabel(branch) {
+            const count = Number(branch.customers_today ?? 0);
+            return `${count} customer${count === 1 ? '' : 's'} today`;
         },
         async checkTagAvailability() {
             const tag = (this.tagNumber || '').trim();

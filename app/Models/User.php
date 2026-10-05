@@ -84,6 +84,10 @@ class User extends Authenticatable
             return true;
         }
 
+        if ($key === 'cycles' && ! $this->canManageAllBranches() && ! $this->branch?->isMachineEquipped()) {
+            return false;
+        }
+
         return in_array($key, $this->access ?? [], true);
     }
 

@@ -126,11 +126,7 @@ class JobOrderController extends Controller
         $branchId ??= Branch::where('is_active', true)->value('id');
 
         $branches = Branch::where('is_active', true)->orderBy('name')->get();
-        $processingBranches = Branch::where('is_active', true)
-            ->where('branch_type', 'full_service')
-            ->where('machine_count', '>', 0)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+        $processingBranches = $this->processingBranchesWithTodayLoad();
         $customers = Customer::where('is_active', true)
             ->when(! in_array($user->role, ['super_admin', 'admin'], true), fn ($q) => $q->where('branch_id', $user->branch_id))
             ->orderBy('name')
@@ -253,11 +249,7 @@ class JobOrderController extends Controller
             ])
             ->values();
 
-        $processingBranches = Branch::where('is_active', true)
-            ->where('branch_type', 'full_service')
-            ->where('machine_count', '>', 0)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+        $processingBranches = $this->processingBranchesWithTodayLoad();
 
         return view('admin.job-orders.create', [
             'branches' => $branches,
@@ -1033,6 +1025,33 @@ class JobOrderController extends Controller
                 'paid_at' => $status === 'paid' ? ($existing?->paid_at ?: now()) : null,
             ]
         );
+    }
+
+    private function processingBranchesWithTodayLoad()
+    {
+        $branches = Branch::where('is_active', true)
+            ->where('branch_type', 'full_service')
+            ->where('machine_count', '>', 0)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+
+        $loads = JobOrder::query()
+            ->where('status', '!=', 'cancelled')
+            ->whereBetween('created_at', [today()->startOfDay(), today()->endOfDay()])
+            ->whereIn(DB::raw('COALESCE(processing_branch_id, branch_id)'), $branches->pluck('id'))
+            ->groupBy(DB::raw('COALESCE(processing_branch_id, branch_id)'))
+            ->get([
+                DB::raw('COALESCE(processing_branch_id, branch_id) as operating_branch_id'),
+                DB::raw('COUNT(DISTINCT customer_id) as customers_today'),
+                DB::raw('COUNT(*) as orders_today'),
+            ])
+            ->keyBy('operating_branch_id');
+
+        return $branches->each(function (Branch $branch) use ($loads): void {
+            $load = $loads->get($branch->id);
+            $branch->setAttribute('customers_today', (int) ($load->customers_today ?? 0));
+            $branch->setAttribute('orders_today', (int) ($load->orders_today ?? 0));
+        });
     }
 
     private function resolveProcessingBranchId(Branch $originBranch, ?int $processingBranchId, User $user): int

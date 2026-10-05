@@ -48,6 +48,7 @@ class CycleController extends Controller
         $canChooseBranch = $user->canManageAllBranches();
         $branches = Branch::query()
             ->where('is_active', true)
+            ->whereNotIn('branch_type', ['pickup_dropoff', 'no_machine'])
             ->when(! $canChooseBranch, fn ($query) => $query->whereKey($user->branch_id))
             ->orderBy('id')
             ->get(['id', 'name', 'machine_count']);

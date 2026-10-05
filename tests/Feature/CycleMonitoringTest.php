@@ -1475,7 +1475,7 @@ class CycleMonitoringTest extends TestCase
         $dropoffUser = User::factory()->create([
             'role' => 'branch_manager',
             'branch_id' => $dropoffBranch->id,
-            'access' => ['cycles'],
+            'access' => ['cycles', 'job_orders'],
         ]);
 
         $this->actingAs($productionUser)
@@ -1498,6 +1498,10 @@ class CycleMonitoringTest extends TestCase
 
         $this->actingAs($dropoffUser)
             ->patch(route('admin.cycles.release', $order), ['action' => 'release_here'])
+            ->assertForbidden();
+
+        $this->actingAs($dropoffUser)
+            ->patch(route('admin.job-orders.release', $order))
             ->assertRedirect();
 
         $this->assertDatabaseHas('job_orders', [
@@ -1885,6 +1889,89 @@ class CycleMonitoringTest extends TestCase
             'trial_status' => 'active',
             'grace_period_days' => 0,
         ]);
+    }
+
+    public function test_no_machine_branch_cannot_access_cycle_monitoring_even_with_menu_access(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $dropoffBranch = $this->createBranch([
+            'name' => 'Branch 3',
+            'code' => 'B0003',
+            'branch_type' => 'pickup_dropoff',
+            'machine_count' => 0,
+        ]);
+        $dropoffUser = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['cycles', 'job_orders'],
+        ]);
+
+        $this->assertFalse($dropoffUser->hasMenuAccess('cycles'));
+        $this->assertArrayNotHasKey('cycles', $dropoffUser->accessibleMenuItems());
+
+        $this->actingAs($dropoffUser)
+            ->get(route('admin.cycles.index'))
+            ->assertForbidden();
+    }
+
+    public function test_cycle_monitoring_branch_filter_excludes_no_machine_branches_for_admin(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $productionBranch = $this->createBranch(['name' => 'Production Branch', 'code' => 'PROD', 'branch_type' => 'full_service', 'machine_count' => 3]);
+        $dropoffBranch = $this->createBranch(['name' => 'Dropoff Only Branch', 'code' => 'DROP', 'branch_type' => 'pickup_dropoff', 'machine_count' => 0]);
+        $admin = User::factory()->create(['role' => 'admin', 'branch_id' => $productionBranch->id, 'access' => ['cycles']]);
+
+        $this->actingAs($admin)
+            ->get(route('admin.cycles.index'))
+            ->assertOk()
+            ->assertViewHas('branches', fn ($branches) => $branches->contains('id', $productionBranch->id)
+                && ! $branches->contains('id', $dropoffBranch->id));
+    }
+
+    public function test_dropoff_job_order_form_shows_todays_customer_count_per_production_branch(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $dropoffBranch = $this->createBranch(['name' => 'Branch 3', 'code' => 'B0003', 'branch_type' => 'pickup_dropoff', 'machine_count' => 0]);
+        $branchOne = $this->createBranch(['name' => 'Branch 1', 'code' => 'B0001', 'branch_type' => 'full_service', 'machine_count' => 4]);
+        $branchTwo = $this->createBranch(['name' => 'Branch 2', 'code' => 'B0002', 'branch_type' => 'full_service', 'machine_count' => 5]);
+
+        $customerA = $this->createCustomer($branchOne);
+        $customerB = $this->createCustomer($dropoffBranch);
+        $this->createJobOrder($branchOne, $customerA, 'JO-B1-1');
+        $this->createJobOrder($branchOne, $customerA, 'JO-B1-2');
+        $routed = $this->createJobOrder($dropoffBranch, $customerB, 'JO-B3-1');
+        $routed->update(['processing_branch_id' => $branchOne->id]);
+        $yesterday = $this->createJobOrder($branchTwo, $this->createCustomer($branchTwo), 'JO-B2-OLD');
+        $yesterday->forceFill(['created_at' => now()->subDay()])->save();
+        $cancelled = $this->createJobOrder($branchTwo, $this->createCustomer($branchTwo), 'JO-B2-CXL');
+        $cancelled->update(['status' => 'cancelled']);
+
+        $dropoffUser = User::factory()->create([
+            'role' => 'cashier',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['job_orders'],
+        ]);
+
+        $this->actingAs($dropoffUser)
+            ->get(route('admin.job-orders.create'))
+            ->assertOk()
+            ->assertViewHas('processingBranches', function ($branches) use ($branchOne, $branchTwo, $dropoffBranch) {
+                $one = $branches->firstWhere('id', $branchOne->id);
+                $two = $branches->firstWhere('id', $branchTwo->id);
+
+                return ! $branches->contains('id', $dropoffBranch->id)
+                    && $one->customers_today === 2
+                    && $one->orders_today === 3
+                    && $two->customers_today === 0
+                    && $two->orders_today === 0;
+            })
+            ->assertSee('Receiving Production Branch');
     }
 
     private function createBranch(array $overrides = []): Branch

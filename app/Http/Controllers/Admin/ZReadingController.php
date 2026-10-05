@@ -106,13 +106,21 @@ class ZReadingController extends Controller
             ->where('branch_id', $branch->id)
             ->whereDate('business_date', $businessDate)
             ->first();
-        $machineCount = max(
-            1,
-            (int) $branch->machine_count,
-            (int) collect($summary['machine_cycles'])->max('machine_number'),
-            (int) collect(array_keys($reading?->machine_counters ?? []))->max()
-        );
-        $machineCounters = $this->machineCountersForDate((int) $branch->id, $businessDate, $machineCount, $summary, $reading);
+        if ($branch->isNoMachine()) {
+            $machineCount = 0;
+            $machineCounters = [];
+        } else {
+            $machineCount = max(
+                1,
+                (int) $branch->machine_count,
+                (int) collect($summary['machine_cycles'])->max('machine_number'),
+                (int) collect(array_keys($reading?->machine_counters ?? []))->max()
+            );
+            $machineCounters = $this->withSystemCycleCounts(
+                $this->machineCountersForDate((int) $branch->id, $businessDate, $machineCount, $summary, $reading),
+                $summary
+            );
+        }
 
         return view('admin.z-readings.create', [
             'branch' => $branch,
@@ -156,16 +164,22 @@ class ZReadingController extends Controller
         $actualGcash = round((float) ($validated['actual_gcash_amount'] ?? 0), 2);
         $actualBank = round((float) ($validated['actual_bank_amount'] ?? 0), 2);
         $summary = $this->summary($branchId, $businessDate);
-        $machineCount = max(
-            1,
-            (int) Branch::query()->whereKey($branchId)->value('machine_count'),
-            (int) collect($summary['machine_cycles'])->max('machine_number'),
-            (int) collect(array_keys($validated['machine_counters'] ?? []))->max()
-        );
-        $machineCounters = $this->normalizedMachineCounters(
-            $validated['machine_counters'] ?? $this->machineCountersForDate($branchId, $businessDate, $machineCount, $summary),
-            $summary
-        );
+        $branch = Branch::query()->findOrFail($branchId);
+
+        if ($branch->isNoMachine()) {
+            $machineCounters = [];
+        } else {
+            $machineCount = max(
+                1,
+                (int) $branch->machine_count,
+                (int) collect($summary['machine_cycles'])->max('machine_number'),
+                (int) collect(array_keys($validated['machine_counters'] ?? []))->max()
+            );
+            $machineCounters = $this->normalizedMachineCounters(
+                $validated['machine_counters'] ?? $this->machineCountersForDate($branchId, $businessDate, $machineCount, $summary),
+                $summary
+            );
+        }
         $actualTotal = round($actualCash + $actualGcash + $actualBank, 2);
         $overShort = round($actualTotal - (float) $summary['expected_total_amount'], 2);
         $remarks = $validated['remarks'] ?? null;
@@ -359,6 +373,43 @@ class ZReadingController extends Controller
                 DB::raw('COUNT(*) as cycle_count'),
             ]);
 
+        // Cycles run here for laundry dropped off at another branch (e.g. a no-machine pickup/drop-off branch).
+        $dropoffCycles = DB::table('cycle_records')
+            ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
+            ->join('branches', 'branches.id', '=', 'job_orders.branch_id')
+            ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
+            ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
+            ->whereNotNull('cycle_records.machine_number')
+            ->where('job_orders.processing_branch_id', $branchId)
+            ->where('job_orders.branch_id', '!=', $branchId)
+            ->whereDate('cycle_records.started_at', $businessDate)
+            ->groupBy('job_orders.branch_id', 'branches.name', 'cycle_records.cycle_type')
+            ->get([
+                'job_orders.branch_id',
+                'branches.name as branch_name',
+                'cycle_records.cycle_type',
+                DB::raw('COUNT(*) as cycle_count'),
+            ]);
+
+        // Cycles run at other branches for laundry dropped off here.
+        $outsourcedCycles = DB::table('cycle_records')
+            ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
+            ->join('branches', 'branches.id', '=', 'job_orders.processing_branch_id')
+            ->whereNull('job_orders.deleted_at')
+            ->where('job_orders.status', '!=', 'cancelled')
+            ->whereIn('cycle_records.cycle_type', ['wash', 'dry'])
+            ->where('job_orders.branch_id', $branchId)
+            ->where('job_orders.processing_branch_id', '!=', $branchId)
+            ->whereDate('cycle_records.started_at', $businessDate)
+            ->groupBy('job_orders.processing_branch_id', 'branches.name', 'cycle_records.cycle_type')
+            ->get([
+                'job_orders.processing_branch_id as branch_id',
+                'branches.name as branch_name',
+                'cycle_records.cycle_type',
+                DB::raw('COUNT(*) as cycle_count'),
+            ]);
+
         $cleaningCompletions = DailyTaskCompletion::query()
             ->with(['task:id,name,affects_machine_counter', 'completer:id,name', 'employeeCompleter:id,name'])
             ->where('branch_id', $branchId)
@@ -547,10 +598,27 @@ class ZReadingController extends Controller
             ])->all(),
             'cleaning_cycles' => $cleaningCycles,
             'cleaning_task_records' => $cleaningTaskRecords,
+            'dropoff_cycles' => $this->cyclesByBranch($dropoffCycles),
+            'outsourced_cycles' => $this->cyclesByBranch($outsourcedCycles),
             'transaction_count' => $jobOrders->count(),
             'first_job_order_number' => $jobOrders->first()?->job_order_number,
             'last_job_order_number' => $jobOrders->last()?->job_order_number,
         ];
+    }
+
+    private function cyclesByBranch($rows): array
+    {
+        return collect($rows)
+            ->groupBy('branch_id')
+            ->map(fn ($rows) => [
+                'branch_id' => (int) $rows->first()->branch_id,
+                'branch_name' => $rows->first()->branch_name,
+                'wash' => (int) $rows->where('cycle_type', 'wash')->sum('cycle_count'),
+                'dry' => (int) $rows->where('cycle_type', 'dry')->sum('cycle_count'),
+            ])
+            ->sortBy('branch_name')
+            ->values()
+            ->all();
     }
 
     private function salesColumns($serviceTotals): array
@@ -714,7 +782,38 @@ class ZReadingController extends Controller
                 return [$machineNumber => $normalized];
             })
             ->sortKeys()
-            ->all();
+            ->pipe(fn ($counters) => $this->withSystemCycleCounts($counters->all(), $summary));
+    }
+
+    /**
+     * Attach the cycle count detected by Cycle Monitoring next to each counter so a manually
+     * corrected ending (e.g. a machine run by accident) shows how far it is from the system count.
+     */
+    private function withSystemCycleCounts(array $counters, array $summary): array
+    {
+        $systemCycles = collect($summary['machine_cycles'] ?? [])
+            ->groupBy('machine_number')
+            ->map(fn ($rows) => collect($rows)->mapWithKeys(fn ($row) => [
+                $row['cycle_type'] => (int) $row['cycle_count'],
+            ])->all());
+
+        foreach ($counters as $machine => $types) {
+            foreach (['wash', 'dry'] as $type) {
+                $systemTotal = (int) data_get($systemCycles, "{$machine}.{$type}", 0);
+                $beginning = data_get($types, "{$type}.beginning");
+                $total = data_get($types, "{$type}.total");
+
+                $counters[$machine][$type]['system_total'] = $systemTotal;
+                $counters[$machine][$type]['system_ending'] = is_numeric($beginning)
+                    ? ((int) $beginning + $systemTotal) % self::COUNTER_MODULUS
+                    : null;
+                $counters[$machine][$type]['difference'] = is_numeric($total)
+                    ? (int) $total - $systemTotal
+                    : null;
+            }
+        }
+
+        return $counters;
     }
 
     private function nextReadingNumber(int $branchId, string $businessDate): string

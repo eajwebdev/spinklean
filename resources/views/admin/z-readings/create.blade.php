@@ -43,6 +43,22 @@
             if (values.beginning === '' || values.ending === '' || values.beginning == null || values.ending == null) return 0;
             const difference = Number(values.ending) - Number(values.beginning);
             return difference >= 0 ? difference : 10000 + difference;
+        },
+        systemTotal(machine, type) {
+            return Number(this.machineCounters[machine]?.[type]?.system_total || 0);
+        },
+        cycleDifference(machine, type) {
+            const values = this.machineCounters[machine]?.[type] || {};
+            if (values.ending === '' || values.ending == null) return 0;
+            return this.cycleTotal(machine, type) - this.systemTotal(machine, type);
+        },
+        resetEnding(machine, type) {
+            const values = this.machineCounters[machine][type];
+            values.ending = (Number(values.beginning || 0) + this.systemTotal(machine, type)) % 10000;
+        },
+        get mismatchCount() {
+            return Object.keys(this.machineCounters).reduce((count, machine) => count
+                + ['wash', 'dry'].filter(type => this.cycleDifference(machine, type) !== 0).length, 0);
         }
     }"
     class="space-y-4"
@@ -194,11 +210,44 @@
                     </div>
                 </div>
 
+                @if($machineCount === 0)
+                <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                    <div class="mb-3">
+                        <h2 class="text-base font-semibold">Machine Cycles at Production Branches</h2>
+                        <p class="text-xs text-muted">This branch has no machines. These are the cycles run today at production branches for laundry dropped off here.</p>
+                    </div>
+                    @forelse($summary['outsourced_cycles'] as $outsourced)
+                        <div class="flex justify-between border-t border-border py-1.5 text-sm first:border-t-0 dark:border-gray-800">
+                            <span>{{ $outsourced['branch_name'] }}</span>
+                            <span class="font-semibold">Wash {{ $outsourced['wash'] }} &middot; Dry {{ $outsourced['dry'] }}</span>
+                        </div>
+                    @empty
+                        <p class="text-sm text-muted">No cycles recorded yet for this date.</p>
+                    @endforelse
+                </div>
+                @else
                 <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                     <div class="mb-3">
                         <h2 class="text-base font-semibold">Machine Counter Readings</h2>
-                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending; ending is auto-computed from detected cycles and end-of-day cleaning tasks for the selected date.</p>
+                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending. Ending is pre-filled from Cycle Monitoring and end-of-day cleaning tasks; correct it to the actual machine counter if it differs (e.g. a machine was started by accident).</p>
                     </div>
+
+                    <div x-show="mismatchCount > 0" x-cloak class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
+                        <span class="font-semibold" x-text="`${mismatchCount} counter(s) do not match Cycle Monitoring.`"></span>
+                        Please explain the difference in Remarks.
+                    </div>
+
+                    @if(! empty($summary['dropoff_cycles']))
+                        <div class="mb-3 rounded-lg border border-border bg-smoke p-3 text-xs dark:border-gray-800 dark:bg-gray-950">
+                            <div class="mb-1 font-semibold">Included in the counts: laundry from drop-off branches</div>
+                            @foreach($summary['dropoff_cycles'] as $dropoff)
+                                <div class="flex justify-between">
+                                    <span>{{ $dropoff['branch_name'] }}</span>
+                                    <span>Wash {{ $dropoff['wash'] }} &middot; Dry {{ $dropoff['dry'] }}</span>
+                                </div>
+                            @endforeach
+                        </div>
+                    @endif
 
                     @if(! empty($summary['cleaning_task_records']))
                         <div class="mb-3 rounded-lg border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-950 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200">
@@ -243,8 +292,18 @@
                                                         aria-label="{{ $fieldLabel }} {{ $label }} {{ $machine }}"
                                                     >
                                                 @else
-                                                    <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]" x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']">
-                                                    <div class="mt-1 h-9 rounded-md border border-border bg-smoke px-2 py-2 text-right text-sm font-semibold dark:border-gray-800 dark:bg-gray-950" x-text="counter(machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}'])"></div>
+                                                    <input
+                                                        name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]"
+                                                        x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']"
+                                                        type="number"
+                                                        min="0"
+                                                        max="9999"
+                                                        step="1"
+                                                        required
+                                                        class="mt-1 h-9 w-full rounded-md border px-2 text-right text-sm font-semibold dark:bg-gray-900"
+                                                        :class="cycleDifference('{{ $machine }}', '{{ $type }}') !== 0 ? 'border-amber-400 bg-amber-50 dark:border-amber-600' : 'border-border dark:border-gray-800'"
+                                                        aria-label="{{ $fieldLabel }} {{ $label }} {{ $machine }}"
+                                                    >
                                                 @endif
                                             </label>
                                         @endforeach
@@ -259,11 +318,27 @@
                                         <span>Total {{ $label }} Cycle</span>
                                         <span x-text="cycleTotal('{{ $machine }}', '{{ $type }}')"></span>
                                     </div>
+                                    <div class="flex items-center justify-between border-t border-border px-3 py-1.5 text-[11px] text-muted dark:border-gray-800">
+                                        <span>Cycle Monitoring: <span class="font-semibold" x-text="systemTotal('{{ $machine }}', '{{ $type }}')"></span></span>
+                                        <span x-show="cycleDifference('{{ $machine }}', '{{ $type }}') === 0" class="font-semibold text-emerald-600">Match</span>
+                                    </div>
+                                    <div
+                                        x-show="cycleDifference('{{ $machine }}', '{{ $type }}') !== 0"
+                                        x-cloak
+                                        class="flex items-center justify-between gap-2 border-t border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+                                    >
+                                        <span>
+                                            Difference:
+                                            <span class="font-bold" x-text="(cycleDifference('{{ $machine }}', '{{ $type }}') > 0 ? '+' : '') + cycleDifference('{{ $machine }}', '{{ $type }}')"></span>
+                                        </span>
+                                        <button type="button" @click="resetEnding('{{ $machine }}', '{{ $type }}')" class="font-semibold underline">Use system count</button>
+                                    </div>
                                 </div>
                             @endfor
                         @endforeach
                     </div>
                 </div>
+                @endif
             </div>
 
             <!-- Right Column: Balances & System Expected -->
