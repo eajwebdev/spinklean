@@ -165,6 +165,11 @@
                                             <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
                                             In Transit &rarr; {{ $order->processingBranch?->name }}
                                         </span>
+                                    @elseif($order->returned_received_at)
+                                        <span class="inline-flex items-center gap-1 rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-800 dark:bg-indigo-900/40 dark:text-indigo-300">
+                                            <span class="h-1.5 w-1.5 rounded-full bg-indigo-500"></span>
+                                            Back at {{ $order->branch?->name }}
+                                        </span>
                                     @elseif($order->production_accepted_at)
                                         <span class="inline-flex items-center gap-1 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-semibold text-blue-800 dark:bg-blue-900/40 dark:text-blue-300">
                                             <span class="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
@@ -190,6 +195,26 @@
                                     <p class="inline-flex items-center gap-1 text-xs font-medium text-green-700 dark:text-green-300"><span class="h-2 w-2 rounded-full bg-green-500"></span>Released {{ $order->released_at->format('M d, h:i A') }}</p>
                                 @elseif($isInProcess)
                                     <p class="inline-flex items-center gap-1 text-xs font-medium text-blue-700 dark:text-blue-300"><span class="h-2 w-2 rounded-full bg-blue-500"></span>In process</p>
+                                @elseif($order->status === 'returning_to_branch')
+                                    <p class="inline-flex items-center gap-1 text-xs font-medium text-purple-700 dark:text-purple-300"><span class="h-2 w-2 rounded-full bg-purple-500"></span>On the way back from {{ $order->processingBranch?->name }}</p>
+                                @elseif($order->status === 'back_at_branch')
+                                    <p class="text-xs font-medium text-indigo-700 dark:text-indigo-300">Received back. Mark it ready to notify the customer.</p>
+                                    @if(auth()->user()->canManageAllBranches() || (int) auth()->user()->branch_id === (int) $order->branch_id)
+                                        <div class="flex flex-wrap gap-1">
+                                            @foreach(['ready_for_pickup' => ['Ready for Pickup', 'bg-teal-600 hover:bg-teal-700', '#0f766e'], 'ready_for_delivery' => ['Ready for Delivery', 'bg-orange-600 hover:bg-orange-700', '#ea580c']] as $readyStatus => [$readyLabel, $readyClasses, $readyColor])
+                                                <form method="POST" action="{{ route('admin.job-orders.status', $order) }}">
+                                                    @csrf
+                                                    @method('PATCH')
+                                                    <input type="hidden" name="status" value="{{ $readyStatus }}">
+                                                    <button
+                                                        type="submit"
+                                                        x-on:click.prevent="Swal.fire({ title: @js($readyLabel.'?'), text: 'The customer will be notified that the laundry is ready.', icon: 'question', showCancelButton: true, confirmButtonColor: @js($readyColor), confirmButtonText: 'Mark as Ready' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                                        class="inline-flex h-7 items-center rounded-md px-2 text-[11px] font-semibold text-white {{ $readyClasses }}"
+                                                    >{{ $readyLabel }}</button>
+                                                </form>
+                                            @endforeach
+                                        </div>
+                                    @endif
                                 @endif
                             </div>
                         </td>
@@ -219,7 +244,7 @@
                                     @csrf
                                     <button
                                         type="submit"
-                                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. Laundry will be ready on shelf for customer pickup.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. You can then mark it ready to notify the customer.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
                                         title="Receive returned laundry back at drop-off branch"
                                         aria-label="Receive returned laundry back at drop-off branch"
                                         class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-purple-200 text-purple-700 hover:bg-purple-50 dark:border-purple-900/60 dark:text-purple-300 dark:hover:bg-purple-500/10"
@@ -418,7 +443,7 @@
                     @csrf
                     @method('PATCH')
                     <select name="status" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
-                        @foreach(array_filter($statuses, fn ($status) => $status !== 'cancelled') as $status)
+                        @foreach(array_filter($statuses, fn ($status) => $status !== 'cancelled' && ($status === $order->status || ! in_array($status, ['returning_to_branch', 'back_at_branch'], true))) as $status)
                             <option value="{{ $status }}" @selected($order->status === $status)>{{ \App\Support\StatusBadge::label($status) }}</option>
                         @endforeach
                     </select>

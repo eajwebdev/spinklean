@@ -40,6 +40,15 @@ class JobOrder extends Model
         return $this->isTransferred();
     }
 
+    /**
+     * Laundry processed at another branch must physically come back to the drop-off branch
+     * before that branch can mark it ready (which notifies the customer).
+     */
+    public function awaitingReturnToDropoff(): bool
+    {
+        return $this->isTransferred() && ! $this->returned_received_at;
+    }
+
     public function isFullyPaid(): bool
     {
         return (float) $this->balance <= 0;

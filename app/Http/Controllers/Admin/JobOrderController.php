@@ -30,7 +30,10 @@ use Illuminate\Validation\ValidationException;
 
 class JobOrderController extends Controller
 {
-    private const STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+    private const STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+
+    // Set only by the return flow (Cycle Monitoring "Return" and "Receive returned laundry").
+    private const RETURN_FLOW_STATUSES = ['returning_to_branch', 'back_at_branch'];
 
     public function index(Request $request)
     {
@@ -544,6 +547,10 @@ class JobOrderController extends Controller
             ]);
         }
 
+        if ($message = $this->dropoffStatusChangeError($request, $jobOrder, $validated['status'])) {
+            return back()->with('error', $message)->withErrors(['status' => $message])->withInput();
+        }
+
         return DB::transaction(function () use ($request, $validated, $selectedServices, $jobOrder) {
             $previousProcessingBranchId = (int) ($jobOrder->processing_branch_id ?: $jobOrder->branch_id);
             $inventoryWasDeducted = (bool) $jobOrder->inventory_deducted_at;
@@ -697,6 +704,10 @@ class JobOrderController extends Controller
             'status' => ['required', Rule::in(['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'])],
         ]);
 
+        if ($message = $this->dropoffStatusChangeError($request, $jobOrder, $validated['status'])) {
+            return back()->with('error', $message)->withErrors(['status' => $message])->withInput();
+        }
+
         if (in_array($validated['status'], ['ready_for_pickup', 'ready_for_delivery', 'completed'], true)) {
             $jobOrder->endActiveCycles();
         }
@@ -817,6 +828,7 @@ class JobOrderController extends Controller
         $this->authorizeJobOrderRelease($request, $jobOrder);
 
         abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);
+        abort_if($jobOrder->awaitingReturnToDropoff(), 422, 'This laundry must be returned to its drop-off branch and released from there.');
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
 
         $jobOrder->loadMissing(['customer', 'poTransaction']);
@@ -843,6 +855,38 @@ class JobOrderController extends Controller
         SmsNotifier::jobOrderStatus($jobOrder);
 
         return back()->with('success', 'Laundry released to customer successfully.');
+    }
+
+    /**
+     * Laundry processed at another branch is marked ready only by its drop-off branch, and only
+     * after that branch has received it back from production.
+     */
+    private function dropoffStatusChangeError(Request $request, JobOrder $jobOrder, string $status): ?string
+    {
+        if ($status === $jobOrder->status) {
+            return null;
+        }
+
+        if (in_array($status, self::RETURN_FLOW_STATUSES, true)) {
+            return 'This status is set automatically when laundry is returned to or received at the drop-off branch.';
+        }
+
+        if (! $jobOrder->isTransferred() || ! in_array($status, ['ready_for_pickup', 'ready_for_delivery', 'completed'], true)) {
+            return null;
+        }
+
+        $jobOrder->loadMissing('branch');
+        $dropoffName = $jobOrder->branch?->name ?? 'the drop-off branch';
+
+        if ($jobOrder->awaitingReturnToDropoff()) {
+            return "{$jobOrder->job_order_number} must be returned to and received at {$dropoffName} before it can be marked ready.";
+        }
+
+        if (! $request->user()->canManageAllBranches() && (int) $request->user()->branch_id !== (int) $jobOrder->branch_id) {
+            return "Only {$dropoffName} can mark {$jobOrder->job_order_number} ready.";
+        }
+
+        return null;
     }
 
     private function nextJobOrderNumber(int $branchId): string

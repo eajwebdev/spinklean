@@ -39,20 +39,44 @@ class ReportController extends Controller
         return view('admin.reports.index', $this->reportData($request));
     }
 
+    /**
+     * Report tabs on the Reports page; a PDF can be generated for one tab or for all of them.
+     */
+    public const SECTIONS = [
+        'sales' => 'Sales',
+        'z_reading' => 'Z Reading',
+        'operations' => 'Operations',
+        'receivables' => 'Receivables',
+        'inventory' => 'Inventory Usage',
+        'payments' => 'Payments',
+        'expenses' => 'Expenses',
+        'payables' => 'Accounts Payable',
+        'cash' => 'Cash Movements',
+        'ledger' => 'Customer Ledger',
+        'activity' => 'Activity Logs',
+    ];
+
     public function pdf(Request $request)
     {
         $data = $this->reportData($request);
         $branchName = $data['selectedBranchId']
             ? $data['branches']->firstWhere('id', $data['selectedBranchId'])?->name
             : 'All branches';
+        $section = array_key_exists((string) $request->query('section'), self::SECTIONS)
+            ? (string) $request->query('section')
+            : null;
 
         $pdf = Pdf::loadView('admin.reports.pdf', [
             ...$data,
             'branchName' => $branchName,
             'generatedAt' => now(),
+            'section' => $section,
+            'sectionLabel' => $section ? self::SECTIONS[$section] : null,
         ])->setPaper('a4', 'landscape');
 
-        return $pdf->stream('reports-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf');
+        $prefix = $section ? 'report-'.str_replace('_', '-', $section) : 'reports';
+
+        return $pdf->stream($prefix.'-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf');
     }
 
     public function zReadingPdf(Request $request)

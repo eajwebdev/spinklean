@@ -22,7 +22,10 @@ class CycleController extends Controller
 
     private const CYCLE_HISTORY_LIMIT = 5;
 
-    private const FILTER_STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
+    private const FILTER_STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
+
+    // Production is finished once laundry is ready, released, or sent back to its drop-off branch.
+    private const DONE_STATUSES = ['returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
 
     private const CYCLE_TYPES = [
         'wash' => 'Washing',
@@ -66,6 +69,8 @@ class CycleController extends Controller
             'washing' => 'Washing',
             'drying' => 'Drying',
             'folding' => 'Folding / Ironing',
+            'returning_to_branch' => 'Returning to Branch',
+            'back_at_branch' => 'Back at Branch',
             'ready_for_pickup' => 'Ready for Pickup',
             'ready_for_delivery' => 'Ready for Delivery',
             'completed' => 'Completed',
@@ -76,7 +81,7 @@ class CycleController extends Controller
             ->when($customerBranchId, fn ($query) => $query->where(fn ($query) => $query
                 ->where('branch_id', $customerBranchId)
                 ->orWhereHas('jobOrders', fn ($query) => $query
-                    ->when($selectedStatus, fn ($query) => $query->where('status', $selectedStatus), fn ($query) => $query->whereNotIn('status', ['ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled']))
+                    ->when($selectedStatus, fn ($query) => $query->where('status', $selectedStatus), fn ($query) => $query->whereNotIn('status', [...self::DONE_STATUSES, 'cancelled']))
                     ->where(fn ($query) => $query
                         ->where(fn ($query) => $query
                             ->where('processing_branch_id', $customerBranchId)
@@ -94,7 +99,7 @@ class CycleController extends Controller
 
         $ordersQuery = JobOrder::query()
             ->where('status', '!=', 'cancelled')
-            ->when($selectedStatus, fn ($q) => $q->where('status', $selectedStatus), fn ($q) => $q->whereNotIn('status', ['ready_for_pickup', 'ready_for_delivery', 'completed']))
+            ->when($selectedStatus, fn ($q) => $q->where('status', $selectedStatus), fn ($q) => $q->whereNotIn('status', self::DONE_STATUSES))
             ->when($selectedBranchId, fn ($q) => $q->where(fn ($query) => $query
                 ->where('branch_id', $selectedBranchId)
                 ->orWhere(fn ($query) => $query
@@ -142,6 +147,8 @@ class CycleController extends Controller
                 'transaction_type',
                 'is_rush',
                 'production_accepted_at',
+                'returned_to_branch_at',
+                'returned_received_at',
                 'created_at',
             ])
             ->withCount([
@@ -308,6 +315,13 @@ class CycleController extends Controller
             'status' => ['required', Rule::in(array_keys(self::COMPLETION_STATUSES))],
         ]);
 
+        if ($jobOrder->awaitingReturnToDropoff()) {
+            $jobOrder->loadMissing('branch');
+            $message = "{$jobOrder->job_order_number} belongs to {$jobOrder->branch?->name}. Return the laundry to {$jobOrder->branch?->name} first; they will mark it ready once they receive it.";
+
+            return back()->with('error', $message)->withErrors(['status' => $message]);
+        }
+
         $activeCycles = $jobOrder->cycles()
             ->whereNull('ended_at')
             ->get(['id', 'cycle_type', 'machine_number', 'cycle_number']);
@@ -348,7 +362,6 @@ class CycleController extends Controller
     public function releaseAction(Request $request, JobOrder $jobOrder)
     {
         $this->authorizeReleaseAction($request, $jobOrder);
-        abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);
 
         $validated = $request->validate([
             'action' => ['required', Rule::in(array_keys(self::RELEASE_ACTIONS))],
@@ -358,13 +371,24 @@ class CycleController extends Controller
             $processingBranchId = $jobOrder->processing_branch_id ?: $jobOrder->branch_id;
             abort_unless((int) $processingBranchId === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
             abort_unless((int) $processingBranchId !== (int) $jobOrder->branch_id, 422);
+            // Orders marked ready under the old flow can still be sent back.
+            abort_if(in_array($jobOrder->status, ['returning_to_branch', 'back_at_branch', 'completed', 'cancelled'], true) || ! $jobOrder->awaitingReturnToDropoff(), 422, 'This laundry was already returned or released.');
 
+            abort_if($jobOrder->transfers()->where('transfer_type', 'return')->where('transfer_status', 'pending')->exists(), 422, 'This laundry is already on its way back to the drop-off branch.');
+
+            if ($jobOrder->cycles()->whereNull('ended_at')->exists()) {
+                $message = "End the active cycle(s) of {$jobOrder->job_order_number} before returning it.";
+
+                return back()->with('error', $message)->withErrors(['action' => $message]);
+            }
+
+            // No SMS here: the drop-off branch notifies the customer when it marks the laundry ready.
             $jobOrder->update([
-                'status' => $jobOrder->transaction_type === 'delivery' ? 'ready_for_delivery' : 'ready_for_pickup',
-                'current_branch_id' => $jobOrder->branch_id,
+                'status' => 'returning_to_branch',
                 'release_branch_id' => $jobOrder->branch_id,
                 'production_completed_at' => $jobOrder->production_completed_at ?: now(),
                 'returned_to_branch_at' => now(),
+                'returned_received_at' => null,
                 'completed_at' => null,
                 'released_at' => null,
             ]);
@@ -389,8 +413,11 @@ class CycleController extends Controller
                 'processing_branch_id' => $processingBranchId,
             ], $jobOrder->branch_id);
 
-            return back()->with('success', 'Laundry returned to drop-off branch for release.');
+            return back()->with('success', 'Laundry sent back to '.$jobOrder->branch?->name.'. They will mark it ready once received.');
         }
+
+        abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);
+        abort_if($jobOrder->awaitingReturnToDropoff(), 422, 'This laundry must be returned to its drop-off branch and released from there.');
 
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
 

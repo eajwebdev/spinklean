@@ -60,7 +60,7 @@
                         <div class="flex items-center gap-2">
                             <span data-lucide="activity" class="h-3.5 w-3.5 text-muted"></span>
                             <select name="status" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" required>
-                                @foreach($statuses as $status)
+                                @foreach(array_filter($statuses, fn ($status) => $status === $jobOrder->status || ! in_array($status, ['returning_to_branch', 'back_at_branch'], true)) as $status)
                                     <option value="{{ $status }}" @selected(old('status', $jobOrder->status) === $status)>{{ \App\Support\StatusBadge::label($status) }}</option>
                                 @endforeach
                             </select>

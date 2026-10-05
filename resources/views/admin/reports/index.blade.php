@@ -3,9 +3,18 @@
 @section('page_title', 'Reports')
 
 @section('content')
+@php
+    $reportSections = \App\Http\Controllers\Admin\ReportController::SECTIONS;
+@endphp
 <div
     x-data="{
-        tab: 'sales',
+        tab: @js(array_key_exists((string) request('tab'), $reportSections) ? request('tab') : 'sales'),
+        sectionLabels: @js($reportSections),
+        sectionPdfUrl() {
+            const url = new URL(@js(route('admin.reports.pdf', request()->except(['tab', 'section']))));
+            url.searchParams.set('section', this.tab);
+            return url.toString();
+        },
         dateRange: @js($dateRangeValue),
         customerModal: false,
         cust: { id: '', from: @js($dateFrom), to: @js($dateTo) },
@@ -14,7 +23,12 @@
             if (this.cust.id) p.set('customer_id', this.cust.id);
             return base + '?' + p.toString();
         },
-        init() { this.$nextTick(() => window.flatpickr && window.flatpickr(this.$refs.dateRange, { mode: 'range', dateFormat: 'Y-m-d', defaultDate: this.dateRange.split(' to '), onClose: (dates, value) => this.dateRange = value })) }
+        init() {
+            this.$watch('tab', (value) => {
+                try { const url = new URL(window.location.href); url.searchParams.set('tab', value); window.history.replaceState(null, '', url); } catch (e) {}
+            });
+            this.$nextTick(() => window.flatpickr && window.flatpickr(this.$refs.dateRange, { mode: 'range', dateFormat: 'Y-m-d', defaultDate: this.dateRange.split(' to '), onClose: (dates, value) => this.dateRange = value }));
+        }
     }"
     class="space-y-4"
 >
@@ -31,6 +45,7 @@
 
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
                 <form method="GET" action="{{ route('admin.reports.index') }}" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                    <input type="hidden" name="tab" :value="tab">
                     @if($canChooseBranch)
                         <label class="block">
                             <span class="mb-1 block text-xs font-medium text-muted">Branch</span>
@@ -77,14 +92,21 @@
                         @click.outside="open = false"
                         class="absolute right-0 z-30 mt-2 w-80 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-border bg-white shadow-xl dark:border-gray-800 dark:bg-gray-900"
                     >
-                        <a href="{{ route('admin.reports.pdf', request()->query()) }}" target="_blank" class="flex items-start gap-3 px-3.5 py-3 text-sm transition hover:bg-smoke dark:hover:bg-gray-950">
+                        <a :href="sectionPdfUrl()" target="_blank" class="flex items-start gap-3 px-3.5 py-3 text-sm transition hover:bg-smoke dark:hover:bg-gray-950">
                             <span data-lucide="file-text" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
+                            <span>
+                                <span class="block font-medium whitespace-nowrap" x-text="`${sectionLabels[tab]} PDF`">Sales PDF</span>
+                                <span class="block text-xs text-muted">Only the tab you are viewing</span>
+                            </span>
+                        </a>
+                        <a href="{{ route('admin.reports.pdf', request()->except(['tab', 'section'])) }}" target="_blank" class="flex items-start gap-3 border-t border-border px-3.5 py-3 text-sm transition hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                            <span data-lucide="reports" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
                             <span>
                                 <span class="block font-medium whitespace-nowrap">Full Reports PDF</span>
                                 <span class="block text-xs text-muted">Every section for the selected range</span>
                             </span>
                         </a>
-                        <a href="{{ route('admin.reports.z-reading.pdf', request()->query()) }}" target="_blank" class="flex items-start gap-3 border-t border-border px-3.5 py-3 text-sm transition hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                        <a href="{{ route('admin.reports.z-reading.pdf', request()->except(['tab', 'section'])) }}" target="_blank" class="flex items-start gap-3 border-t border-border px-3.5 py-3 text-sm transition hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
                             <span data-lucide="receipt" class="mt-0.5 h-4 w-4 shrink-0 text-primary"></span>
                             <span>
                                 <span class="block font-medium whitespace-nowrap">Consolidated Z Reading PDF</span>
@@ -132,19 +154,7 @@
     </div>
 
     <div class="flex gap-1 overflow-x-auto rounded-lg border border-border bg-white p-1 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        @foreach([
-            'sales' => 'Sales',
-            'z_reading' => 'Z Reading',
-            'operations' => 'Operations',
-            'receivables' => 'Receivables',
-            'inventory' => 'Inventory Usage',
-            'payments' => 'Payments',
-            'expenses' => 'Expenses',
-            'payables' => 'Accounts Payable',
-            'cash' => 'Cash Movements',
-            'ledger' => 'Customer Ledger',
-            'activity' => 'Activity Logs',
-        ] as $key => $label)
+        @foreach($reportSections as $key => $label)
             <button type="button" @click="tab = '{{ $key }}'" class="h-8 shrink-0 rounded-md px-3 text-sm font-medium" :class="tab === '{{ $key }}' ? 'bg-primary text-white' : 'text-muted hover:bg-smoke dark:hover:bg-gray-950'">{{ $label }}</button>
         @endforeach
     </div>

@@ -4,11 +4,13 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
+use App\Models\BranchSetting;
 use App\Models\Customer;
 use App\Models\PoTransaction;
 use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Support\Activity;
+use App\Support\StatementOfAccountRows;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -87,8 +89,16 @@ class PoTransactionController extends Controller
 
         $filename = 'po-statement-of-account-'.str($data['customer']->name)->slug().'-'.$data['dateFrom'].'-to-'.$data['dateTo'].'.pdf';
 
+        // The statement is issued by the branch the customer belongs to.
+        $data['customer']->loadMissing('branch.setting');
+        $issuingBranch = $data['customer']->branch;
+        $data['transactions']->load('jobOrder.items:id,job_order_id,description,service_category,quantity,unit_price,total');
+
         return Pdf::loadView('admin.po-transactions.statement-of-account-pdf', [
             ...$data,
+            'issuingBranch' => $issuingBranch,
+            'statementDetails' => BranchSetting::statementDetailsFor($issuingBranch?->setting),
+            'soa' => StatementOfAccountRows::build($data['transactions'], $data['dateFrom'], $data['dateTo']),
             'generatedAt' => now(),
         ])->setPaper('a4', 'portrait')->stream($filename);
     }
@@ -176,6 +186,38 @@ class PoTransactionController extends Controller
         });
 
         return back()->with('success', 'PO transaction updated successfully.');
+    }
+
+    /**
+     * Edit only the delivery details; amounts, payments and status are left untouched.
+     */
+    public function updateDelivery(Request $request, PoTransaction $poTransaction)
+    {
+        $this->authorizePoTransaction($request, $poTransaction);
+
+        $validated = $request->validate([
+            'date_delivered' => ['nullable', 'date'],
+            'dr_number' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $before = [
+            'date_delivered' => $poTransaction->date_delivered?->toDateString(),
+            'dr_number' => $poTransaction->dr_number,
+        ];
+
+        $poTransaction->update([
+            'date_delivered' => $validated['date_delivered'] ?? null,
+            'dr_number' => filled($validated['dr_number'] ?? null) ? trim($validated['dr_number']) : null,
+        ]);
+
+        Activity::log($request, 'po_transaction_delivery_updated', $poTransaction, [
+            'po_number' => $poTransaction->po_number,
+            'before' => $before,
+            'date_delivered' => $poTransaction->date_delivered?->toDateString(),
+            'dr_number' => $poTransaction->dr_number,
+        ], $poTransaction->branch_id);
+
+        return back()->with('success', 'Delivery details updated for PO '.$poTransaction->po_number.'.');
     }
 
     private function authorizePoTransaction(Request $request, PoTransaction $poTransaction): void

@@ -237,7 +237,11 @@ class JobOrderTransferController extends Controller
                     'current_branch_id' => $transfer->destination_branch_id,
                     'release_branch_id' => $transfer->destination_branch_id,
                     'returned_received_at' => now(),
-                    'status' => $jobOrder->transaction_type === 'delivery' ? 'ready_for_delivery' : 'ready_for_pickup',
+                    // The drop-off branch marks it ready (and notifies the customer) as a separate step.
+                    // Orders returned under the old flow were already marked ready, so keep that status.
+                    'status' => in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true)
+                        ? $jobOrder->status
+                        : 'back_at_branch',
                 ]);
 
                 Activity::log($request, 'returned_laundry_received_at_branch', $jobOrder, [
@@ -249,7 +253,7 @@ class JobOrderTransferController extends Controller
             }
         });
 
-        return back()->with('success', "Laundry (Tag #{$transfer->tag_number}) received back and ready for customer pickup.");
+        return back()->with('success', "Laundry (Tag #{$transfer->tag_number}) received back. Mark it Ready for Pickup or Ready for Delivery to notify the customer.");
     }
 
     /**

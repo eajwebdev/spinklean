@@ -57,7 +57,7 @@
                     @csrf
                     <button
                         type="submit"
-                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. Laundry will be ready on shelf for customer pickup.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                        x-on:click.prevent="Swal.fire({ title: 'Receive Returned Laundry?', text: 'Confirm receipt of Tag #{{ $order->tag_number }} back at {{ $order->branch?->name }}. You can then mark it ready to notify the customer.', icon: 'question', showCancelButton: true, confirmButtonText: 'Receive Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
                         class="inline-flex h-9 items-center gap-1.5 rounded-md bg-purple-600 px-3 text-sm font-semibold text-white shadow-sm hover:bg-purple-700"
                     >
                         <span data-lucide="package-open" class="h-4 w-4"></span>

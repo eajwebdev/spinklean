@@ -426,6 +426,123 @@ class PoTransactionTest extends TestCase
             ->assertDontSee('JO-RECEIVABLE-CANCELLED');
     }
 
+    public function test_delivery_details_edit_changes_only_date_delivered_and_dr_number(): void
+    {
+        $this->settings();
+
+        $user = User::factory()->create(['role' => 'super_admin']);
+        [$po] = $this->billedPo($user, 'PO-DELIVERY');
+        $po->refresh();
+        $before = $po->only(['amount', 'paid_amount', 'balance', 'status', 'po_number', 'transaction_date', 'company_name']);
+        $billedAt = $po->billed_at->toDateTimeString();
+
+        $this->actingAs($user)
+            ->patch(route('admin.po-transactions.delivery', $po), [
+                'date_delivered' => '2026-10-03',
+                'dr_number' => '  DR-00123  ',
+            ])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $po->refresh();
+        $this->assertSame('2026-10-03', $po->date_delivered->toDateString());
+        $this->assertSame('DR-00123', $po->dr_number);
+        $this->assertEquals($before, $po->only(array_keys($before)));
+        $this->assertSame($billedAt, $po->billed_at->toDateTimeString());
+        $this->assertDatabaseMissing('po_transaction_payments', ['po_transaction_id' => $po->id]);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'po_transaction_delivery_updated', 'subject_id' => $po->id]);
+
+        $this->actingAs($user)
+            ->get(route('admin.po-transactions.index', ['date_range' => today()->toDateString().' to '.today()->toDateString()]))
+            ->assertOk()
+            ->assertSee('Date Delivered')
+            ->assertSee('DR #')
+            ->assertSee('Oct 03, 2026')
+            ->assertSee('DR-00123');
+
+        // Blank fields clear the values.
+        $this->actingAs($user)
+            ->patch(route('admin.po-transactions.delivery', $po), ['date_delivered' => '', 'dr_number' => ''])
+            ->assertRedirect();
+        $po->refresh();
+        $this->assertNull($po->date_delivered);
+        $this->assertNull($po->dr_number);
+
+        // Invalid input is rejected without changing anything.
+        $this->actingAs($user)
+            ->patch(route('admin.po-transactions.delivery', $po), ['date_delivered' => 'not-a-date', 'dr_number' => str_repeat('9', 101)])
+            ->assertSessionHasErrors(['date_delivered', 'dr_number']);
+        $this->assertNull($po->fresh()->dr_number);
+    }
+
+    public function test_payments_and_job_order_resync_keep_delivery_details(): void
+    {
+        $this->settings();
+
+        $user = User::factory()->create(['role' => 'super_admin']);
+        [$po, $order] = $this->billedPo($user, 'PO-KEEP');
+        $po->update(['date_delivered' => '2026-10-01', 'dr_number' => 'DR-KEEP']);
+
+        $this->actingAs($user)
+            ->patch(route('admin.po-transactions.update', $po), [
+                'status' => 'billed',
+                'payment_method' => 'cash',
+                'paid_amount' => 300,
+            ])
+            ->assertRedirect();
+
+        // Re-saving the job order re-syncs the PO row; delivery details must survive.
+        $sync = new \ReflectionMethod(\App\Http\Controllers\Admin\JobOrderController::class, 'syncPoTransaction');
+        $sync->invoke(app(\App\Http\Controllers\Admin\JobOrderController::class), $order->fresh(['customer', 'poTransaction']));
+
+        $po->refresh();
+        $this->assertSame(300.0, (float) $po->paid_amount);
+        $this->assertSame('2026-10-01', $po->date_delivered->toDateString());
+        $this->assertSame('DR-KEEP', $po->dr_number);
+    }
+
+    public function test_other_branch_cannot_edit_delivery_details(): void
+    {
+        $this->settings();
+
+        $admin = User::factory()->create(['role' => 'super_admin']);
+        [$po] = $this->billedPo($admin, 'PO-OTHER');
+        $otherBranch = Branch::query()->create(['name' => 'Other Branch', 'code' => 'OTH', 'is_active' => true]);
+        $staff = User::factory()->create(['role' => 'branch_manager', 'branch_id' => $otherBranch->id, 'access' => ['po_transactions']]);
+
+        $this->actingAs($staff)
+            ->patch(route('admin.po-transactions.delivery', $po), ['date_delivered' => '2026-10-02', 'dr_number' => 'DR-X'])
+            ->assertForbidden();
+
+        $this->assertNull($po->fresh()->dr_number);
+    }
+
+    private function billedPo(User $user, string $poNumber): array
+    {
+        $branch = Branch::query()->create(['name' => 'Main Branch '.$poNumber, 'code' => $poNumber, 'is_active' => true]);
+        $customer = Customer::query()->create([
+            'branch_id' => $branch->id,
+            'name' => 'Corporate Customer',
+            'billing_type' => 'po',
+            'is_active' => true,
+        ]);
+        $order = $this->poOrder($branch, $customer, $user, 'JO-'.$poNumber, 1000);
+        $po = PoTransaction::query()->create([
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'job_order_id' => $order->id,
+            'company_name' => $customer->name,
+            'po_number' => $poNumber,
+            'transaction_date' => today()->toDateString(),
+            'amount' => 1000,
+            'balance' => 1000,
+            'status' => 'billed',
+            'billed_at' => now()->subHour(),
+        ]);
+
+        return [$po, $order];
+    }
+
     private function settings(): void
     {
         SystemSetting::query()->create([

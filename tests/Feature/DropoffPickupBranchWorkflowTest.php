@@ -686,7 +686,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 14: Cycle monitoring at Branch 1 advances order (wash -> dry -> fold -> ready).
+     * Case 14: Cycle monitoring at Branch 1 advances order (wash -> dry -> fold), then returns it to Branch 3 instead of marking it ready.
      */
     public function test_case_14_cycle_monitoring_at_branch_1_advances_order(): void
     {
@@ -738,11 +738,17 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $foldCycle = CycleRecord::where('job_order_id', $order->id)->where('cycle_type', 'fold')->firstOrFail();
         $this->actingAs($this->b1User)->patch(route('admin.cycles.end', $foldCycle))->assertRedirect();
 
-        // Mark Ready for Pickup
+        // Branch 1 cannot mark Branch 3 laundry ready...
         $this->actingAs($this->b1User)->patch(route('admin.cycles.status', $order), [
             'status' => 'ready_for_pickup',
+        ])->assertRedirect()->assertSessionHas('error');
+        $this->assertSame('folding', $order->fresh()->status);
+
+        // ...it sends it back to Branch 3 instead.
+        $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $order), [
+            'action' => 'return_to_dropoff',
         ])->assertRedirect();
-        $this->assertSame('ready_for_pickup', $order->fresh()->status);
+        $this->assertSame('returning_to_branch', $order->fresh()->status);
     }
 
     /**
@@ -773,9 +779,9 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 16: Mark ready & return to Branch 3 -> return transfer created (pending).
+     * Case 16: Return to Branch 3 after production -> return transfer created (pending), status returning_to_branch.
      */
-    public function test_case_16_mark_ready_and_return_to_branch_3_creates_pending_return_transfer(): void
+    public function test_case_16_return_to_branch_3_creates_pending_return_transfer(): void
     {
         $order = JobOrder::query()->create([
             'branch_id' => $this->branch3->id,
@@ -785,7 +791,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'customer_id' => $this->b3Customer->id,
             'job_order_number' => 'JO-RETURN-001',
             'tag_number' => 'TAG-RETURN-001',
-            'status' => 'ready_for_pickup',
+            'status' => 'folding',
             'subtotal' => 150,
             'total' => 150,
             'paid_amount' => 0,
@@ -807,8 +813,10 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transfer_status' => 'pending',
         ]);
 
+        // In transit: still physically at Branch 1 until Branch 3 receives it.
         $order->refresh();
-        $this->assertSame($this->branch3->id, $order->current_branch_id);
+        $this->assertSame('returning_to_branch', $order->status);
+        $this->assertSame($this->branch1->id, $order->current_branch_id);
         $this->assertSame($this->branch3->id, $order->release_branch_id);
     }
 
@@ -918,7 +926,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 20: Release laundry after payment -> status completed/released, physical tag freed for next day.
+     * Case 20: Branch 3 releases received-back laundry after payment -> status completed/released, physical tag freed for next day.
      */
     public function test_case_20_release_laundry_after_payment_completes_order_and_frees_tag_next_day(): void
     {
@@ -931,6 +939,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'job_order_number' => 'JO-RELEASED-OK',
             'tag_number' => 'TAG-RELEASE-20',
             'status' => 'ready_for_pickup',
+            'returned_received_at' => now(),
             'subtotal' => 150,
             'total' => 150,
             'paid_amount' => 150,
@@ -1051,9 +1060,9 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 23: Direct release from processing branch (Option B) completes order and keeps 100% sale on Branch 3.
+     * Case 23: The processing branch cannot release Branch 3 laundry directly; it must return it to Branch 3.
      */
-    public function test_case_23_direct_release_from_processing_branch_option_b_completes_order_and_keeps_sales_at_branch_3(): void
+    public function test_case_23_processing_branch_cannot_release_branch_3_laundry_directly(): void
     {
         $order = JobOrder::query()->create([
             'branch_id' => $this->branch3->id,
@@ -1070,49 +1079,32 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'balance' => 0,
         ]);
 
-        Payment::query()->create([
-            'branch_id' => $this->branch3->id,
-            'collected_branch_id' => $this->branch3->id,
-            'customer_id' => $this->b3Customer->id,
-            'job_order_id' => $order->id,
-            'received_by' => $this->b3User->id,
-            'payment_number' => 'PAY-DIR-001',
-            'payment_type' => 'cash',
-            'amount' => 200,
-            'paid_at' => now(),
-        ]);
-
-        $response = $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $order), [
+        $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $order), [
             'action' => 'release_here',
-        ]);
-        $response->assertRedirect();
+        ])->assertStatus(422);
 
         $order->refresh();
-        $this->assertSame('completed', $order->status);
-        $this->assertNotNull($order->released_at);
-        $this->assertSame($this->branch1->id, (int) $order->release_branch_id);
-        $this->assertSame($this->branch3->id, (int) $order->branch_id);
+        $this->assertSame('ready_for_pickup', $order->status);
+        $this->assertNull($order->released_at);
 
-        $today = now()->toDateString();
-        $b3Finance = FinancialReconciliation::forPeriod($this->branch3->id, $today, $today);
-        $b1Finance = FinancialReconciliation::forPeriod($this->branch1->id, $today, $today);
-
-        $this->assertEquals(200, $b3Finance['expected_total']);
-        $this->assertEquals(200, $b3Finance['cash_collections']);
-        $this->assertEquals(0, $b1Finance['expected_total']);
-        $this->assertEquals(0, $b1Finance['cash_collections']);
+        // An order marked ready under the old flow can still be sent back to Branch 3.
+        $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $order), [
+            'action' => 'return_to_dropoff',
+        ])->assertRedirect();
+        $this->assertSame('returning_to_branch', $order->fresh()->status);
     }
 
     /**
-     * Case 24: Direct release blocked if balance unpaid, permitted if PO customer.
+     * Case 24: Release at Branch 3 blocked if balance unpaid, permitted if PO customer.
      */
-    public function test_case_24_direct_release_blocked_if_unpaid_permitted_if_po_customer(): void
+    public function test_case_24_release_at_branch_3_blocked_if_unpaid_permitted_if_po_customer(): void
     {
         $unpaidOrder = JobOrder::query()->create([
             'branch_id' => $this->branch3->id,
             'processing_branch_id' => $this->branch1->id,
-            'current_branch_id' => $this->branch1->id,
-            'release_branch_id' => $this->branch1->id,
+            'current_branch_id' => $this->branch3->id,
+            'release_branch_id' => $this->branch3->id,
+            'returned_received_at' => now(),
             'customer_id' => $this->b3Customer->id,
             'job_order_number' => 'JO-UNPAID-01',
             'tag_number' => 'TAG-UNPAID-01',
@@ -1124,9 +1116,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         ]);
 
         // Should fail with 422 for regular customer with unpaid balance
-        $response = $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $unpaidOrder), [
-            'action' => 'release_here',
-        ]);
+        $response = $this->actingAs($this->b3User)->patch(route('admin.job-orders.release', $unpaidOrder));
         $response->assertStatus(422);
 
         $unpaidOrder->refresh();
@@ -1145,8 +1135,9 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $poOrder = JobOrder::query()->create([
             'branch_id' => $this->branch3->id,
             'processing_branch_id' => $this->branch1->id,
-            'current_branch_id' => $this->branch1->id,
-            'release_branch_id' => $this->branch1->id,
+            'current_branch_id' => $this->branch3->id,
+            'release_branch_id' => $this->branch3->id,
+            'returned_received_at' => now(),
             'customer_id' => $poCustomer->id,
             'job_order_number' => 'JO-PO-01',
             'tag_number' => 'TAG-PO-01',
@@ -1157,9 +1148,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'balance' => 500,
         ]);
 
-        $poResponse = $this->actingAs($this->b1User)->patch(route('admin.cycles.release', $poOrder), [
-            'action' => 'release_here',
-        ]);
+        $poResponse = $this->actingAs($this->b3User)->patch(route('admin.job-orders.release', $poOrder));
         $poResponse->assertRedirect();
 
         $poOrder->refresh();

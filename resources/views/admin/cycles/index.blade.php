@@ -284,7 +284,9 @@
                 </div>
                 --}}
 
-                @if(! in_array($order->status, ['ready_for_pickup', 'ready_for_delivery', 'completed'], true))
+                @php($mustReturnToDropoff = $order->awaitingReturnToDropoff())
+                @php($returnInTransit = $order->returned_to_branch_at && ! $order->returned_received_at)
+                @if(! in_array($order->status, ['returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed'], true))
                     <div class="mb-2 space-y-1">
                         @foreach(['wash' => $cycleTypes['wash'], 'dry' => $cycleTypes['dry']] as $type => $label)
                             <form method="POST" action="{{ route('admin.cycles.store', $order) }}">
@@ -322,6 +324,35 @@
                                 </button>
                             </form>
                         @endforeach
+                        @if($mustReturnToDropoff)
+                            <form method="POST" action="{{ route('admin.cycles.release', $order) }}" class="col-span-2" x-data>
+                                @csrf
+                                @method('PATCH')
+                                <input type="hidden" name="action" value="return_to_dropoff">
+                                @if(! $canReturnToDropoff)
+                                    <p class="flex h-9 items-center justify-center rounded-md bg-smoke px-1 text-center text-[11px] text-muted dark:bg-gray-950">Processed at {{ $processingBranch?->name }}</p>
+                                @elseif((int) $order->active_cycles_count > 0)
+                                    <button
+                                        type="button"
+                                        x-on:click="Swal.fire({ title: 'Cycle still running', text: @js('This job order still has '.$order->active_cycles_count.' active '.\Illuminate\Support\Str::plural('cycle', $order->active_cycles_count).'. End all cycles before returning it.'), icon: 'warning', confirmButtonColor: '#dc2626' })"
+                                        class="inline-flex h-9 w-full cursor-not-allowed items-center justify-center gap-1 rounded-md bg-purple-600 px-1 text-[11px] font-semibold text-white opacity-50"
+                                        title="End all active cycles first"
+                                    >
+                                        <span data-lucide="truck" class="h-4 w-4"></span>
+                                        Return to {{ $order->branch?->name }}
+                                    </button>
+                                @else
+                                    <button
+                                        type="submit"
+                                        x-on:click.prevent="Swal.fire({ title: @js('Return to '.$order->branch?->name.'?'), text: @js('Production is finished. Send Tag #'.$order->tag_number.' back to '.$order->branch?->name.'. They will mark it ready and notify the customer once they receive it.'), icon: 'question', showCancelButton: true, confirmButtonText: 'Return Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                        class="inline-flex h-9 w-full items-center justify-center gap-1 rounded-md bg-purple-600 px-1 text-[11px] font-semibold text-white hover:bg-purple-700"
+                                    >
+                                        <span data-lucide="truck" class="h-4 w-4"></span>
+                                        Return to {{ $order->branch?->name }}
+                                    </button>
+                                @endif
+                            </form>
+                        @else
                         @foreach([
                             'ready_for_pickup' => ['label' => 'Ready for Pickup', 'icon' => 'package-check', 'classes' => 'bg-teal-600 hover:bg-teal-700', 'color' => '#0f766e'],
                             'ready_for_delivery' => ['label' => 'Ready for Delivery', 'icon' => 'truck', 'classes' => 'bg-orange-600 hover:bg-orange-700', 'color' => '#ea580c'],
@@ -352,10 +383,21 @@
                                 @endif
                             </form>
                         @endforeach
+                        @endif
                     </div>
                 @else
+                    @if(in_array($order->status, ['returning_to_branch', 'back_at_branch'], true))
+                        <div class="mb-3 flex items-center gap-1.5 rounded-lg border border-purple-200 bg-purple-50/60 p-3 text-xs font-semibold text-purple-800 dark:border-purple-900/60 dark:bg-purple-500/10 dark:text-purple-300">
+                            <span data-lucide="{{ $order->status === 'returning_to_branch' ? 'truck' : 'package-check' }}" class="h-4 w-4"></span>
+                            <span>
+                                {{ $order->status === 'returning_to_branch'
+                                    ? 'Returning to '.$order->branch?->name.' (waiting for them to receive it)'
+                                    : 'Received back at '.$order->branch?->name.'. They will mark it ready.' }}
+                            </span>
+                        </div>
+                    @endif
                     @if(in_array($order->status, ['ready_for_pickup', 'ready_for_delivery'], true))
-                        @php($pendingReturn = ! $order->current_branch_id && $order->release_branch_id && $order->release_branch_id === $order->branch_id)
+                        @php($pendingReturn = $returnInTransit)
                         <div class="mb-3 rounded-lg border border-teal-200 bg-teal-50/50 p-3 dark:border-teal-900/60 dark:bg-teal-500/10">
                             <div class="flex items-center justify-between gap-2 mb-2">
                                 <span class="text-xs font-bold text-teal-800 dark:text-teal-300">
@@ -375,7 +417,7 @@
                                 </div>
                             @else
                                 <div class="flex flex-wrap gap-2">
-                                    @if($canReturnToDropoff)
+                                    @if($canReturnToDropoff && $mustReturnToDropoff)
                                         <form method="POST" action="{{ route('admin.cycles.release', $order) }}">
                                             @csrf
                                             @method('PATCH')
@@ -391,6 +433,7 @@
                                         </form>
                                     @endif
 
+                                    @unless($mustReturnToDropoff)
                                     <form method="POST" action="{{ route('admin.cycles.release', $order) }}">
                                         @csrf
                                         @method('PATCH')
@@ -404,6 +447,7 @@
                                             Direct Release
                                         </button>
                                     </form>
+                                    @endunless
                                 </div>
                             @endif
                         </div>

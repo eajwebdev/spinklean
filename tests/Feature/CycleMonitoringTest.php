@@ -1396,7 +1396,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertStringNotContainsString('B0003-B0003', $order->job_order_number);
     }
 
-    public function test_production_branch_can_release_pickup_dropoff_order_here(): void
+    public function test_production_branch_cannot_mark_dropoff_order_ready_or_release_it(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -1414,91 +1414,133 @@ class CycleMonitoringTest extends TestCase
             'machine_count' => 3,
         ]);
         $customer = $this->createCustomer($dropoffBranch);
-        $order = $this->createJobOrder($dropoffBranch, $customer, 'JO-RELEASE-HERE');
+        $order = $this->createJobOrder($dropoffBranch, $customer, 'JO-RETURN-FLOW');
         $order->update([
             'processing_branch_id' => $productionBranch->id,
             'current_branch_id' => $productionBranch->id,
             'release_branch_id' => $productionBranch->id,
             'production_accepted_at' => now(),
+            'status' => 'folding',
         ]);
         $productionUser = User::factory()->create([
             'role' => 'branch_manager',
             'branch_id' => $productionBranch->id,
-            'access' => ['cycles'],
+            'access' => ['cycles', 'job_orders'],
+        ]);
+        $dropoffUser = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['job_orders'],
         ]);
 
         $this->actingAs($productionUser)
             ->patch(route('admin.cycles.status', $order), ['status' => 'ready_for_pickup'])
-            ->assertRedirect();
+            ->assertRedirect()
+            ->assertSessionHas('error');
+        $this->assertSame('folding', $order->fresh()->status);
 
+        // Job order status changes belong to the drop-off branch that owns the order.
+        $this->actingAs($productionUser)
+            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_pickup'])
+            ->assertForbidden();
+        $this->assertSame('folding', $order->fresh()->status);
+
+        // Even if it was marked ready under the old flow, it cannot be released at the production branch.
+        $order->update(['status' => 'ready_for_pickup', 'balance' => 0]);
         $this->actingAs($productionUser)
             ->patch(route('admin.cycles.release', $order), ['action' => 'release_here'])
-            ->assertRedirect();
-
-        $order->refresh();
-        $this->assertSame('completed', $order->status);
-        $this->assertSame($productionBranch->id, $order->current_branch_id);
-        $this->assertSame($productionBranch->id, $order->release_branch_id);
-        $this->assertNotNull($order->released_at);
+            ->assertStatus(422);
+        $this->actingAs($productionUser)
+            ->patch(route('admin.job-orders.release', $order))
+            ->assertStatus(422);
+        $this->assertNull($order->fresh()->released_at);
     }
 
-    public function test_production_branch_can_return_ready_order_to_dropoff_for_release(): void
+    public function test_dropoff_order_returns_to_dropoff_branch_which_marks_it_ready_and_releases_it(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
 
         $dropoffBranch = $this->createBranch([
             'name' => 'Pickup Branch',
-            'code' => 'DROP4',
+            'code' => 'DROP3',
             'branch_type' => 'pickup_dropoff',
             'machine_count' => 0,
         ]);
         $productionBranch = $this->createBranch([
             'name' => 'Production Branch',
-            'code' => 'PROD4',
+            'code' => 'PROD3',
             'branch_type' => 'full_service',
             'machine_count' => 3,
         ]);
         $customer = $this->createCustomer($dropoffBranch);
-        $order = $this->createJobOrder($dropoffBranch, $customer, 'JO-RETURN-DROP');
+        $order = $this->createJobOrder($dropoffBranch, $customer, 'JO-RETURN-FLOW');
         $order->update([
             'processing_branch_id' => $productionBranch->id,
             'current_branch_id' => $productionBranch->id,
             'release_branch_id' => $productionBranch->id,
             'production_accepted_at' => now(),
+            'status' => 'folding',
         ]);
         $productionUser = User::factory()->create([
             'role' => 'branch_manager',
             'branch_id' => $productionBranch->id,
-            'access' => ['cycles'],
+            'access' => ['cycles', 'job_orders'],
         ]);
         $dropoffUser = User::factory()->create([
             'role' => 'branch_manager',
             'branch_id' => $dropoffBranch->id,
-            'access' => ['cycles', 'job_orders'],
+            'access' => ['job_orders'],
         ]);
 
-        $this->actingAs($productionUser)
-            ->patch(route('admin.cycles.status', $order), ['status' => 'ready_for_pickup'])
-            ->assertRedirect();
-
+        // 1. Production branch finishes and sends the laundry back. No SMS yet.
         $this->actingAs($productionUser)
             ->patch(route('admin.cycles.release', $order), ['action' => 'return_to_dropoff'])
             ->assertRedirect();
 
         $order->refresh();
-        $this->assertSame('ready_for_pickup', $order->status);
-        $this->assertSame($dropoffBranch->id, $order->current_branch_id);
+        $this->assertSame('returning_to_branch', $order->status);
+        $this->assertSame($productionBranch->id, $order->current_branch_id);
         $this->assertSame($dropoffBranch->id, $order->release_branch_id);
         $this->assertNotNull($order->returned_to_branch_at);
+        $this->assertNull($order->returned_received_at);
+        $this->assertDatabaseCount('sms_logs', 0);
+        $transfer = $order->transfers()->where('transfer_type', 'return')->where('transfer_status', 'pending')->firstOrFail();
 
+        // Returning twice is rejected.
         $this->actingAs($productionUser)
-            ->patch(route('admin.cycles.release', $order), ['action' => 'release_here'])
-            ->assertForbidden();
+            ->patch(route('admin.cycles.release', $order), ['action' => 'return_to_dropoff'])
+            ->assertStatus(422);
 
+        // 2. Drop-off branch cannot mark it ready before it arrives.
         $this->actingAs($dropoffUser)
-            ->patch(route('admin.cycles.release', $order), ['action' => 'release_here'])
+            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_pickup'])
+            ->assertRedirect()
+            ->assertSessionHas('error');
+        $this->assertSame('returning_to_branch', $order->fresh()->status);
+
+        // 3. Drop-off branch receives it: back at branch, still not ready.
+        $this->actingAs($dropoffUser)
+            ->post(route('admin.transfers.receive-return', $transfer))
+            ->assertRedirect();
+
+        $order->refresh();
+        $this->assertSame('back_at_branch', $order->status);
+        $this->assertSame($dropoffBranch->id, $order->current_branch_id);
+        $this->assertNotNull($order->returned_received_at);
+
+        // The production branch still cannot mark it ready.
+        $this->actingAs($productionUser)
+            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_pickup'])
             ->assertForbidden();
+        $this->assertSame('back_at_branch', $order->fresh()->status);
+
+        // 4. Drop-off branch marks it ready, then releases it.
+        $this->actingAs($dropoffUser)
+            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_delivery'])
+            ->assertRedirect()
+            ->assertSessionHas('success');
+        $this->assertSame('ready_for_delivery', $order->fresh()->status);
 
         $this->actingAs($dropoffUser)
             ->patch(route('admin.job-orders.release', $order))
