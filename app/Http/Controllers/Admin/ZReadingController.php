@@ -20,10 +20,15 @@ use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ZReadingController extends Controller
 {
     private const COUNTER_MODULUS = 10000;
+
+    // A lower ending than beginning is only a genuine 9999 -> 0000 rollover when it implies a small
+    // number of cycles; anything above this is treated as a typo.
+    private const MAX_ROLLOVER_CYCLES = 200;
 
     private const DENOMINATIONS = [
         '1000' => 'PHP 1,000',
@@ -149,9 +154,9 @@ class ZReadingController extends Controller
             'actual_bank_amount' => ['nullable', 'numeric', 'min:0', 'max:999999999.99'],
             'machine_counters' => ['nullable', 'array'],
             'machine_counters.*.wash.beginning' => ['nullable', 'integer', 'min:0', 'max:999999999'],
-            'machine_counters.*.wash.ending' => ['nullable', 'integer', 'min:0', 'max:999999999'],
+            'machine_counters.*.wash.ending' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'machine_counters.*.dry.beginning' => ['nullable', 'integer', 'min:0', 'max:999999999'],
-            'machine_counters.*.dry.ending' => ['nullable', 'integer', 'min:0', 'max:999999999'],
+            'machine_counters.*.dry.ending' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
 
@@ -179,7 +184,9 @@ class ZReadingController extends Controller
                 $validated['machine_counters'] ?? $this->machineCountersForDate($branchId, $businessDate, $machineCount, $summary),
                 $summary
             );
+            $this->rejectSuspiciousRollovers($machineCounters);
         }
+
         $actualTotal = round($actualCash + $actualGcash + $actualBank, 2);
         $overShort = round($actualTotal - (float) $summary['expected_total_amount'], 2);
         $remarks = $validated['remarks'] ?? null;
@@ -783,6 +790,36 @@ class ZReadingController extends Controller
             })
             ->sortKeys()
             ->pipe(fn ($counters) => $this->withSystemCycleCounts($counters->all(), $summary));
+    }
+
+    private function rejectSuspiciousRollovers(array $counters): void
+    {
+        $errors = [];
+
+        foreach ($counters as $machine => $types) {
+            foreach (['wash' => 'Wash', 'dry' => 'Dry'] as $type => $label) {
+                $beginning = $types[$type]['beginning'] ?? null;
+                $ending = $types[$type]['ending'] ?? null;
+
+                if ($beginning === null || $ending === null || $ending >= $beginning) {
+                    continue;
+                }
+
+                if (($types[$type]['total'] ?? 0) > self::MAX_ROLLOVER_CYCLES) {
+                    $errors["machine_counters.{$machine}.{$type}.ending"] = sprintf(
+                        '%s %d ending (%04d) is lower than its beginning (%04d). Please check the number; a lower ending is only valid when the counter rolled over past 9999.',
+                        $label,
+                        $machine,
+                        $ending,
+                        $beginning
+                    );
+                }
+            }
+        }
+
+        if ($errors) {
+            throw ValidationException::withMessages($errors);
+        }
     }
 
     /**

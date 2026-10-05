@@ -118,6 +118,50 @@ class ZReadingMachineCounterReconciliationTest extends TestCase
                 && $counters[1]['wash']['difference'] === 1);
     }
 
+    public function test_ending_lower_than_beginning_is_rejected_unless_it_is_a_real_rollover(): void
+    {
+        $user = $this->userFor($this->productionBranch);
+        $idle = ['wash' => ['beginning' => 0, 'ending' => 0], 'dry' => ['beginning' => 0, 'ending' => 0]];
+
+        // Typo: 95 entered for a counter that started at 100 would mean 9,995 cycles.
+        $this->actingAs($user)
+            ->from(route('admin.z-readings.create'))
+            ->post(route('admin.z-readings.store'), [
+                'business_date' => today()->toDateString(),
+                'machine_counters' => [
+                    1 => ['wash' => ['beginning' => 100, 'ending' => 95], 'dry' => ['beginning' => 0, 'ending' => 0]],
+                    2 => $idle,
+                ],
+            ])
+            ->assertSessionHasErrors('machine_counters.1.wash.ending');
+        $this->assertDatabaseCount('z_readings', 0);
+
+        $this->followingRedirects()
+            ->actingAs($user)
+            ->from(route('admin.z-readings.create'))
+            ->post(route('admin.z-readings.store'), [
+                'business_date' => today()->toDateString(),
+                'machine_counters' => [
+                    1 => ['wash' => ['beginning' => 100, 'ending' => 95], 'dry' => ['beginning' => 0, 'ending' => 0]],
+                    2 => $idle,
+                ],
+            ])
+            ->assertSee('The Z Reading was not saved')
+            ->assertSee('Wash 1 ending (0095) is lower than its beginning (0100)');
+
+        // Genuine rollover: 9998 -> 0003 is 5 cycles.
+        $this->actingAs($user)->post(route('admin.z-readings.store'), [
+            'business_date' => today()->toDateString(),
+            'machine_counters' => [
+                1 => ['wash' => ['beginning' => 9998, 'ending' => 3], 'dry' => ['beginning' => 0, 'ending' => 0]],
+                2 => $idle,
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $counters = ZReading::query()->firstOrFail()->machine_counters;
+        $this->assertSame(5, $counters[1]['wash']['total']);
+    }
+
     public function test_no_machine_branch_has_no_machine_counters_and_sees_cycles_run_for_its_laundry(): void
     {
         $user = $this->userFor($this->dropoffBranch);

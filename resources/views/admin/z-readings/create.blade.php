@@ -19,7 +19,7 @@
         expectedBank: Number(@js($summary['expected_bank_amount'])),
         actualGcash: Number(@js($actualGcash ?: 0)),
         actualBank: Number(@js($actualBank ?: 0)),
-        machineCounters: @js($machineCounters),
+        machineCounters: @js(is_array(old('machine_counters')) && $machineCount > 0 ? array_replace_recursive($machineCounters, old('machine_counters')) : $machineCounters),
         get actualCash() {
             return this.denominations.reduce((total, value) => total + (Number(value) * Number(this.counts[value] || 0)), 0);
         },
@@ -136,6 +136,16 @@
 
     <form method="POST" action="{{ route('admin.z-readings.store') }}" class="space-y-4">
         @csrf
+        @if($errors->any())
+            <div class="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-200">
+                <p class="font-semibold">The Z Reading was not saved:</p>
+                <ul class="mt-1 list-disc pl-5">
+                    @foreach($errors->all() as $error)
+                        <li>{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
         <input type="hidden" name="branch_id" value="{{ $branch->id }}">
         <input type="hidden" name="business_date" value="{{ $businessDate }}">
 
@@ -272,67 +282,68 @@
                         </div>
                     @endif
 
-                    <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                    <div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
                         @foreach(['wash' => 'Wash', 'dry' => 'Dry'] as $type => $label)
                             @for($machine = 1; $machine <= $machineCount; $machine++)
                                 @php($cleanCycles = (int) data_get($machineCounters, "{$machine}.{$type}.cleaning_cycles", 0))
+                                @php($ref = "machineCounters['{$machine}']['{$type}']")
+                                @php($args = "'{$machine}', '{$type}'")
                                 <div class="overflow-hidden rounded-md border border-border dark:border-gray-800">
-                                    <div class="bg-smoke px-3 py-2 text-center text-xs font-semibold uppercase dark:bg-gray-950">{{ $label }} {{ $machine }}</div>
-                                    <div class="grid grid-cols-2 gap-2 p-2">
-                                        @foreach(['beginning' => 'Beginning', 'ending' => 'Ending'] as $field => $fieldLabel)
-                                            <label>
-                                                <span class="text-[11px] font-medium uppercase text-muted">{{ $fieldLabel }}</span>
-                                                @if($field === 'beginning')
-                                                    <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]" x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']">
-                                                    <input
-                                                        x-bind:value="counter(machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}'])"
-                                                        type="text"
-                                                        disabled
-                                                        class="mt-1 h-9 w-full rounded-md border border-border bg-smoke px-2 text-right text-sm font-semibold text-muted dark:border-gray-800 dark:bg-gray-950"
-                                                        aria-label="{{ $fieldLabel }} {{ $label }} {{ $machine }}"
-                                                    >
-                                                @else
-                                                    <input
-                                                        name="machine_counters[{{ $machine }}][{{ $type }}][{{ $field }}]"
-                                                        x-model.number="machineCounters['{{ $machine }}']['{{ $type }}']['{{ $field }}']"
-                                                        type="number"
-                                                        min="0"
-                                                        max="9999"
-                                                        step="1"
-                                                        required
-                                                        class="mt-1 h-9 w-full rounded-md border px-2 text-right text-sm font-semibold dark:bg-gray-900"
-                                                        :class="cycleDifference('{{ $machine }}', '{{ $type }}') !== 0 ? 'border-amber-400 bg-amber-50 dark:border-amber-600' : 'border-border dark:border-gray-800'"
-                                                        aria-label="{{ $fieldLabel }} {{ $label }} {{ $machine }}"
-                                                    >
-                                                @endif
-                                            </label>
-                                        @endforeach
+                                    <div class="bg-smoke px-3 py-1.5 text-center text-xs font-semibold uppercase dark:bg-gray-950">{{ $label }} {{ $machine }}</div>
+                                    <div class="space-y-1.5 p-2 text-xs">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="text-muted">Beginning</span>
+                                            <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][beginning]" x-model.number="{{ $ref }}['beginning']">
+                                            <span class="font-semibold tabular-nums text-muted" x-text="counter({{ $ref }}['beginning'])" aria-label="Beginning {{ $label }} {{ $machine }}"></span>
+                                        </div>
+                                        <label class="flex items-center justify-between gap-2">
+                                            <span class="text-muted">Ending</span>
+                                            <input
+                                                name="machine_counters[{{ $machine }}][{{ $type }}][ending]"
+                                                x-model.number="{{ $ref }}['ending']"
+                                                type="text"
+                                                inputmode="numeric"
+                                                pattern="[0-9]*"
+                                                maxlength="4"
+                                                required
+                                                class="h-8 w-20 rounded-md border px-2 text-right text-sm font-semibold tabular-nums dark:bg-gray-900"
+                                                :class="cycleDifference({{ $args }}) !== 0 ? 'border-amber-400 bg-amber-50 dark:bg-amber-950/30' : 'border-border dark:border-gray-800'"
+                                                aria-label="Ending {{ $label }} {{ $machine }}"
+                                            >
+                                        </label>
                                     </div>
                                     @if($cleanCycles > 0)
                                         <div class="flex items-center justify-between border-t border-dashed border-blue-200 bg-blue-50/50 px-3 py-1 text-[11px] text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300">
-                                            <span>🧼 Cleaned today</span>
-                                            <span class="font-bold">+{{ $cleanCycles }} cycle</span>
+                                            <span>Cleaned today</span>
+                                            <span class="font-bold">+{{ $cleanCycles }}</span>
                                         </div>
                                     @endif
-                                    <div class="flex justify-between border-t border-border bg-blue-50 px-3 py-2 text-xs font-semibold dark:border-gray-800 dark:bg-blue-950/30">
-                                        <span>Total {{ $label }} Cycle</span>
-                                        <span x-text="cycleTotal('{{ $machine }}', '{{ $type }}')"></span>
+                                    <div class="flex justify-between border-t border-border bg-blue-50 px-3 py-1.5 text-xs font-semibold dark:border-gray-800 dark:bg-blue-950/30">
+                                        <span>Total cycles</span>
+                                        <span class="tabular-nums" x-text="cycleTotal({{ $args }})"></span>
                                     </div>
-                                    <div class="flex items-center justify-between border-t border-border px-3 py-1.5 text-[11px] text-muted dark:border-gray-800">
-                                        <span>Cycle Monitoring: <span class="font-semibold" x-text="systemTotal('{{ $machine }}', '{{ $type }}')"></span></span>
-                                        <span x-show="cycleDifference('{{ $machine }}', '{{ $type }}') === 0" class="font-semibold text-emerald-600">Match</span>
+                                    <div class="flex items-center justify-between gap-2 border-t border-border px-3 py-1.5 text-[11px] dark:border-gray-800">
+                                        <span class="text-muted">System <span class="font-semibold tabular-nums" x-text="systemTotal({{ $args }})"></span></span>
+                                        <span x-show="cycleDifference({{ $args }}) === 0" class="font-semibold text-emerald-600">Match</span>
+                                        <span
+                                            x-show="cycleDifference({{ $args }}) !== 0"
+                                            x-cloak
+                                            class="rounded bg-amber-100 px-1.5 font-bold text-amber-800 dark:bg-amber-950/30 dark:text-amber-300"
+                                            x-text="(cycleDifference({{ $args }}) > 0 ? '+' : '') + cycleDifference({{ $args }})"
+                                        ></span>
                                     </div>
-                                    <div
-                                        x-show="cycleDifference('{{ $machine }}', '{{ $type }}') !== 0"
+                                    <button
+                                        type="button"
+                                        x-show="cycleDifference({{ $args }}) !== 0"
                                         x-cloak
-                                        class="flex items-center justify-between gap-2 border-t border-amber-200 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
-                                    >
-                                        <span>
-                                            Difference:
-                                            <span class="font-bold" x-text="(cycleDifference('{{ $machine }}', '{{ $type }}') > 0 ? '+' : '') + cycleDifference('{{ $machine }}', '{{ $type }}')"></span>
-                                        </span>
-                                        <button type="button" @click="resetEnding('{{ $machine }}', '{{ $type }}')" class="font-semibold underline">Use system count</button>
-                                    </div>
+                                        @click="resetEnding({{ $args }})"
+                                        class="w-full border-t border-amber-200 bg-amber-50 px-3 py-1 text-[11px] font-semibold text-amber-800 underline dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-300"
+                                    >Use system count</button>
+                                    <div
+                                        x-show="Number({{ $ref }}['ending']) < Number({{ $ref }}['beginning'])"
+                                        x-cloak
+                                        class="border-t border-red-200 bg-red-50 px-3 py-1 text-[11px] leading-4 text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-300"
+                                    >Lower than beginning. Only valid if the counter passed 9999.</div>
                                 </div>
                             @endfor
                         @endforeach

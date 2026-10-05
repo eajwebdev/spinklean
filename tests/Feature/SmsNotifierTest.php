@@ -49,7 +49,7 @@ class SmsNotifierTest extends TestCase
             && $request['recipient'] === '+639171234567'
             && $request['sender_id'] === 'SPINKLEAN'
             && $request['metadata']['sms_log_id'] !== null
-            && stripos($request['content'], 'ready for pickup') !== false);
+            && stripos($request['content'], 'Your laundry is READY') !== false);
 
         $this->assertDatabaseHas('sms_logs', [
             'recipient' => '09171234567',
@@ -178,7 +178,7 @@ class SmsNotifierTest extends TestCase
 
         Http::assertSent(fn ($request) => $request->url() === 'https://unismsapi.com/api/sms'
             && $request['recipient'] === '+639171234567'
-            && stripos($request['content'], 'ready for pickup') !== false);
+            && stripos($request['content'], 'Your laundry is READY') !== false);
 
         $this->assertDatabaseHas('sms_logs', [
             'recipient' => '09171234567',
@@ -209,9 +209,9 @@ class SmsNotifierTest extends TestCase
         SmsNotifier::jobOrderReceived($order);
 
         $message = (string) SmsLog::query()->value('message');
-        $this->assertStringContainsString('We received your laundry', $message);
+        $this->assertStringContainsString("We've received your laundry at Spin Klean", $message);
         $this->assertStringNotContainsString('picked up', $message);
-        $this->assertStringContainsString('once it is ready', $message);
+        $this->assertStringContainsString('once your laundry is ready', $message);
     }
 
     public function test_custom_sms_template_replaces_order_placeholders(): void
@@ -292,6 +292,7 @@ class SmsNotifierTest extends TestCase
         $order->update(['status' => 'ready_for_delivery']);
         SmsNotifier::jobOrderStatus($order->fresh(['branch', 'customer']));
 
+        // Completing (releasing) an order intentionally sends no SMS.
         $order->update(['status' => 'completed']);
         SmsNotifier::jobOrderStatus($order->fresh(['branch', 'customer']));
 
@@ -302,7 +303,6 @@ class SmsNotifierTest extends TestCase
             'Pickup received JO-TEST-001.',
             'Pickup ready JO-TEST-001.',
             'Delivery ready JO-TEST-001.',
-            'Completed JO-TEST-001.',
         ], $messages);
     }
 

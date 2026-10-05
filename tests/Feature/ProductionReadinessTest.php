@@ -360,7 +360,20 @@ class ProductionReadinessTest extends TestCase
         $cashier = User::factory()->create(['role' => 'cashier', 'branch_id' => $branchA->id]);
         $superAdmin = User::factory()->create(['role' => 'super_admin']);
 
+        $jobOrderA = JobOrder::query()->create([
+            'branch_id' => $branchA->id,
+            'customer_id' => $customerA->id,
+            'job_order_number' => 'JO-A-001',
+            'status' => 'completed',
+            'subtotal' => 100,
+            'discount' => 0,
+            'tax' => 0,
+            'total' => 100,
+            'paid_amount' => 100,
+            'balance' => 0,
+        ]);
         Payment::query()->create([
+            'job_order_id' => $jobOrderA->id,
             'branch_id' => $branchA->id,
             'customer_id' => $customerA->id,
             'received_by' => $manager->id,
@@ -369,7 +382,20 @@ class ProductionReadinessTest extends TestCase
             'amount' => 100,
             'paid_at' => today(),
         ]);
+        $jobOrderB = JobOrder::query()->create([
+            'branch_id' => $branchB->id,
+            'customer_id' => $customerB->id,
+            'job_order_number' => 'JO-B-001',
+            'status' => 'completed',
+            'subtotal' => 900,
+            'discount' => 0,
+            'tax' => 0,
+            'total' => 900,
+            'paid_amount' => 900,
+            'balance' => 0,
+        ]);
         Payment::query()->create([
+            'job_order_id' => $jobOrderB->id,
             'branch_id' => $branchB->id,
             'customer_id' => $customerB->id,
             'received_by' => $superAdmin->id,
