@@ -15,6 +15,8 @@ class PoTransaction extends Model
         'company_name',
         'po_number',
         'transaction_date',
+        'date_delivered',
+        'dr_number',
         'amount',
         'paid_amount',
         'balance',
@@ -25,6 +27,7 @@ class PoTransaction extends Model
 
     protected $casts = [
         'transaction_date' => 'date',
+        'date_delivered' => 'date',
         'amount' => 'decimal:2',
         'paid_amount' => 'decimal:2',
         'balance' => 'decimal:2',

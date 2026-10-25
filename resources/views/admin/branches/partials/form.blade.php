@@ -51,6 +51,32 @@
             <input name="qr_pay_url" value="{{ old('qr_pay_url', $branch->qr_pay_url) }}" placeholder="https://spinklean.example/osmena/pay" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
             <p class="mt-1 text-xs text-muted">Where this branch's customers go to pay via QR. Used for SMS.</p>
         </div>
+
+        <div class="md:col-span-2 border-t border-border pt-4 dark:border-gray-800">
+            <p class="text-sm font-semibold">Statement of Account details</p>
+            <p class="text-xs text-muted">Printed on PO statements for this branch's customers, together with the branch address above. Blank fields use the value shown in grey.</p>
+        </div>
+
+        @php($soaSetting = $branch->exists ? $branch->setting : null)
+        @foreach([
+            'soa_tin' => 'Non VAT Reg TIN',
+            'soa_bank_name' => 'Bank',
+            'soa_account_name' => 'Account Name',
+            'soa_account_number' => 'Account Number',
+            'soa_email' => 'Email',
+            'soa_viber' => 'Viber',
+        ] as $soaField => $soaLabel)
+            <div>
+                <label for="{{ $soaField }}-{{ $branch->id ?? 'new' }}" class="mb-1.5 block text-sm font-medium">{{ $soaLabel }}</label>
+                <input
+                    id="{{ $soaField }}-{{ $branch->id ?? 'new' }}"
+                    name="{{ $soaField }}"
+                    value="{{ old($soaField, $soaSetting?->{$soaField}) }}"
+                    placeholder="{{ \App\Models\BranchSetting::SOA_DEFAULTS[$soaField] }}"
+                    class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950"
+                >
+            </div>
+        @endforeach
     </div>
 
     @if($errors->any())

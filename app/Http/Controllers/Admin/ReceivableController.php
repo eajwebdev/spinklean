@@ -20,7 +20,7 @@ class ReceivableController extends Controller
 
     private const UI_BILLING_TYPES = ['regular'];
 
-    private const STATUSES = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
+    private const STATUSES = ['pending', 'washing', 'drying', 'folding', 'returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed'];
 
     public function index(Request $request)
     {

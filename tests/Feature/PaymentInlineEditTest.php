@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\Customer;
+use App\Models\JobOrder;
 use App\Models\Payment;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -67,7 +69,10 @@ class PaymentInlineEditTest extends TestCase
         $receiver = User::factory()->create(['branch_id' => $otherBranch->id]);
         $payment = $this->payment($otherBranch, $receiver, 'cash');
 
-        $this->withoutMiddleware()
+        $this->withoutMiddleware([
+            \App\Http\Middleware\EnsureSystemSettingsCompleted::class,
+            \App\Http\Middleware\EnsureBranchBillingAccess::class,
+        ])
             ->actingAs($staff)
             ->patchJson(route('admin.payments.update', $payment), [
                 'payment_type' => 'gcash',
@@ -80,7 +85,29 @@ class PaymentInlineEditTest extends TestCase
 
     private function payment(Branch $branch, User $receiver, string $type, ?string $reference = null): Payment
     {
+        // Payments are only visible through a non-cancelled job order (Payment's financially_active scope).
+        $customer = Customer::query()->create([
+            'branch_id' => $branch->id,
+            'name' => 'Inline Edit Customer',
+            'billing_type' => 'regular',
+            'is_active' => true,
+        ]);
+        $jobOrder = JobOrder::query()->create([
+            'branch_id' => $branch->id,
+            'customer_id' => $customer->id,
+            'job_order_number' => 'JO-'.uniqid(),
+            'status' => 'completed',
+            'subtotal' => 195,
+            'discount' => 0,
+            'tax' => 0,
+            'total' => 195,
+            'paid_amount' => 195,
+            'balance' => 0,
+        ]);
+
         return Payment::query()->create([
+            'job_order_id' => $jobOrder->id,
+            'customer_id' => $customer->id,
             'branch_id' => $branch->id,
             'collected_branch_id' => $branch->id,
             'received_by' => $receiver->id,

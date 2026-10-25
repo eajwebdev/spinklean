@@ -30,7 +30,10 @@ use Illuminate\Validation\ValidationException;
 
 class JobOrderController extends Controller
 {
-    private const STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+    private const STATUSES = ['pending', 'received', 'washing', 'drying', 'folding', 'returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+
+    // Set only by the return flow (Cycle Monitoring "Return" and "Receive returned laundry").
+    private const RETURN_FLOW_STATUSES = ['returning_to_branch', 'back_at_branch'];
 
     public function index(Request $request)
     {
@@ -126,11 +129,7 @@ class JobOrderController extends Controller
         $branchId ??= Branch::where('is_active', true)->value('id');
 
         $branches = Branch::where('is_active', true)->orderBy('name')->get();
-        $processingBranches = Branch::where('is_active', true)
-            ->where('branch_type', 'full_service')
-            ->where('machine_count', '>', 0)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+        $processingBranches = $this->processingBranchesWithTodayLoad();
         $customers = Customer::where('is_active', true)
             ->when(! in_array($user->role, ['super_admin', 'admin'], true), fn ($q) => $q->where('branch_id', $user->branch_id))
             ->orderBy('name')
@@ -253,11 +252,7 @@ class JobOrderController extends Controller
             ])
             ->values();
 
-        $processingBranches = Branch::where('is_active', true)
-            ->where('branch_type', 'full_service')
-            ->where('machine_count', '>', 0)
-            ->orderBy('name')
-            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+        $processingBranches = $this->processingBranchesWithTodayLoad();
 
         return view('admin.job-orders.create', [
             'branches' => $branches,
@@ -305,19 +300,15 @@ class JobOrderController extends Controller
         $originBranch = Branch::query()->findOrFail($validated['branch_id']);
 
         if ($originBranch->isNoMachine()) {
-            if (empty(trim((string) ($validated['tag_number'] ?? '')))) {
-                throw ValidationException::withMessages([
-                    'tag_number' => 'Tag Number is required for drop-off orders.',
-                ]);
-            }
             if (empty($validated['processing_branch_id'])) {
                 throw ValidationException::withMessages([
                     'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
                 ]);
             }
-        }
 
-        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            // No-machine branches get an auto-generated daily tag inside the transaction.
+            $validated['tag_number'] = null;
+        } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
             $validated['tag_number'] = TagValidator::validate($validated['tag_number']);
         } else {
             $validated['tag_number'] = null;
@@ -361,6 +352,12 @@ class JobOrderController extends Controller
             $total = $taxable + $tax;
             $paymentType = $validated['payment_type'] ?? 'cash';
             $customer = Customer::query()->find($validated['customer_id']);
+
+            if ($originBranch->isNoMachine()) {
+                // Serialize tag generation across no-machine branches so two cashiers can't get the same number.
+                Branch::query()->whereIn('branch_type', ['pickup_dropoff', 'no_machine'])->orderBy('id')->lockForUpdate()->get();
+                $validated['tag_number'] = TagValidator::nextDailyTag();
+            }
             $isPoTransaction = $paymentType === 'po' || $customer?->billing_type === 'po';
             $paid = in_array($paymentType, ['unpaid', 'po'], true) || $isPoTransaction
                 ? 0
@@ -476,7 +473,9 @@ class JobOrderController extends Controller
 
             $createdOrder = $order;
 
-            return redirect()->route('admin.job-orders.index')->with('success', 'Job order created successfully.');
+            return redirect()->route('admin.job-orders.index')->with('success', $order->tag_number && $originBranch->isNoMachine()
+                ? "Job order created successfully. Tag #{$order->tag_number}."
+                : 'Job order created successfully.');
         });
 
         $shouldSendSms = $request->has('send_sms')
@@ -513,14 +512,10 @@ class JobOrderController extends Controller
         ]);
 
         if ($jobOrder->branch?->isNoMachine()) {
-            if (empty(trim((string) ($validated['tag_number'] ?? $jobOrder->tag_number)))) {
-                throw ValidationException::withMessages([
-                    'tag_number' => 'Tag Number is required for drop-off orders.',
-                ]);
-            }
-        }
-
-        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            // Auto-generated tags can't be edited. Do not silently assign a current-day
+            // tag when an older legacy order without a tag is edited.
+            $validated['tag_number'] = $jobOrder->tag_number;
+        } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
             $validated['tag_number'] = TagValidator::validate($validated['tag_number'], $jobOrder->id);
         } else {
             $validated['tag_number'] = $jobOrder->tag_number;
@@ -550,6 +545,10 @@ class JobOrderController extends Controller
             throw ValidationException::withMessages([
                 'items' => 'All services must belong to this job order branch.',
             ]);
+        }
+
+        if ($message = $this->dropoffStatusChangeError($request, $jobOrder, $validated['status'])) {
+            return back()->with('error', $message)->withErrors(['status' => $message])->withInput();
         }
 
         return DB::transaction(function () use ($request, $validated, $selectedServices, $jobOrder) {
@@ -705,6 +704,10 @@ class JobOrderController extends Controller
             'status' => ['required', Rule::in(['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed'])],
         ]);
 
+        if ($message = $this->dropoffStatusChangeError($request, $jobOrder, $validated['status'])) {
+            return back()->with('error', $message)->withErrors(['status' => $message])->withInput();
+        }
+
         if (in_array($validated['status'], ['ready_for_pickup', 'ready_for_delivery', 'completed'], true)) {
             $jobOrder->endActiveCycles();
         }
@@ -825,6 +828,7 @@ class JobOrderController extends Controller
         $this->authorizeJobOrderRelease($request, $jobOrder);
 
         abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);
+        abort_if($jobOrder->awaitingReturnToDropoff(), 422, 'This laundry must be returned to its drop-off branch and released from there.');
         abort_unless((int) ($jobOrder->release_branch_id ?: $jobOrder->current_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id || $request->user()->canManageAllBranches(), 403);
 
         $jobOrder->loadMissing(['customer', 'poTransaction']);
@@ -851,6 +855,38 @@ class JobOrderController extends Controller
         SmsNotifier::jobOrderStatus($jobOrder);
 
         return back()->with('success', 'Laundry released to customer successfully.');
+    }
+
+    /**
+     * Laundry processed at another branch is marked ready only by its drop-off branch, and only
+     * after that branch has received it back from production.
+     */
+    private function dropoffStatusChangeError(Request $request, JobOrder $jobOrder, string $status): ?string
+    {
+        if ($status === $jobOrder->status) {
+            return null;
+        }
+
+        if (in_array($status, self::RETURN_FLOW_STATUSES, true)) {
+            return 'This status is set automatically when laundry is returned to or received at the drop-off branch.';
+        }
+
+        if (! $jobOrder->isTransferred() || ! in_array($status, ['ready_for_pickup', 'ready_for_delivery', 'completed'], true)) {
+            return null;
+        }
+
+        $jobOrder->loadMissing('branch');
+        $dropoffName = $jobOrder->branch?->name ?? 'the drop-off branch';
+
+        if ($jobOrder->awaitingReturnToDropoff()) {
+            return "{$jobOrder->job_order_number} must be returned to and received at {$dropoffName} before it can be marked ready.";
+        }
+
+        if (! $request->user()->canManageAllBranches() && (int) $request->user()->branch_id !== (int) $jobOrder->branch_id) {
+            return "Only {$dropoffName} can mark {$jobOrder->job_order_number} ready.";
+        }
+
+        return null;
     }
 
     private function nextJobOrderNumber(int $branchId): string
@@ -1033,6 +1069,33 @@ class JobOrderController extends Controller
                 'paid_at' => $status === 'paid' ? ($existing?->paid_at ?: now()) : null,
             ]
         );
+    }
+
+    private function processingBranchesWithTodayLoad()
+    {
+        $branches = Branch::where('is_active', true)
+            ->where('branch_type', 'full_service')
+            ->where('machine_count', '>', 0)
+            ->orderBy('name')
+            ->get(['id', 'name', 'code', 'branch_type', 'machine_count']);
+
+        $loads = JobOrder::query()
+            ->where('status', '!=', 'cancelled')
+            ->whereBetween('created_at', [today()->startOfDay(), today()->endOfDay()])
+            ->whereIn(DB::raw('COALESCE(processing_branch_id, branch_id)'), $branches->pluck('id'))
+            ->groupBy(DB::raw('COALESCE(processing_branch_id, branch_id)'))
+            ->get([
+                DB::raw('COALESCE(processing_branch_id, branch_id) as operating_branch_id'),
+                DB::raw('COUNT(DISTINCT customer_id) as customers_today'),
+                DB::raw('COUNT(*) as orders_today'),
+            ])
+            ->keyBy('operating_branch_id');
+
+        return $branches->each(function (Branch $branch) use ($loads): void {
+            $load = $loads->get($branch->id);
+            $branch->setAttribute('customers_today', (int) ($load->customers_today ?? 0));
+            $branch->setAttribute('orders_today', (int) ($load->orders_today ?? 0));
+        });
     }
 
     private function resolveProcessingBranchId(Branch $originBranch, ?int $processingBranchId, User $user): int

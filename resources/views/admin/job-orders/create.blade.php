@@ -60,7 +60,7 @@
                         <div class="flex items-center gap-2">
                             <span data-lucide="activity" class="h-3.5 w-3.5 text-muted"></span>
                             <select name="status" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" required>
-                                @foreach($statuses as $status)
+                                @foreach(array_filter($statuses, fn ($status) => $status === $jobOrder->status || ! in_array($status, ['returning_to_branch', 'back_at_branch'], true)) as $status)
                                     <option value="{{ $status }}" @selected(old('status', $jobOrder->status) === $status)>{{ \App\Support\StatusBadge::label($status) }}</option>
                                 @endforeach
                             </select>
@@ -94,9 +94,21 @@
                                 <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
                                 <select name="processing_branch_id" x-model="processingBranchId" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" :required="isNoMachineBranch">
                                     <template x-for="branch in availableProcessingBranches" :key="branch.id">
-                                        <option :value="branch.id" x-text="branch.name"></option>
+                                        <option :value="branch.id" :selected="String(branch.id) === String(processingBranchId)" x-text="`${branch.name} (${customersTodayLabel(branch)})`"></option>
                                     </template>
                                 </select>
+                            </div>
+                            <div class="flex flex-wrap gap-1" x-show="availableProcessingBranches.length > 1">
+                                <template x-for="branch in availableProcessingBranches" :key="'load-' + branch.id">
+                                    <button
+                                        type="button"
+                                        @click="processingBranchId = branch.id"
+                                        class="rounded px-1.5 py-0.5 text-[10px] font-medium"
+                                        :class="String(branch.id) === String(processingBranchId) ? 'bg-primary text-white' : 'bg-smoke text-muted dark:bg-gray-800'"
+                                        :title="`${branch.orders_today ?? 0} job order(s) today`"
+                                        x-text="`${branch.code || branch.name}: ${customersTodayLabel(branch)}`"
+                                    ></button>
+                                </template>
                             </div>
                         </div>
                     @else
@@ -150,20 +162,22 @@
                 <!-- Laundry Tag # -->
                 <div>
                     <div class="flex items-center justify-between mb-1">
-                        <label class="block text-[10px] font-medium text-muted">
-                            Laundry Tag #
-                            <span x-show="isNoMachineBranch" class="text-red-500 font-bold">*</span>
-                        </label>
-                        <span x-show="tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
-                        <span x-show="tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
+                        <label class="block text-[10px] font-medium text-muted">Laundry Tag #</label>
+                        <span x-show="isNoMachineBranch" class="text-[10px] font-medium text-primary">Auto</span>
+                        <span x-show="!isNoMachineBranch && tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
+                        <span x-show="!isNoMachineBranch && tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
                     </div>
-                    <div class="relative">
+                    <div x-show="isNoMachineBranch" class="flex h-9 w-full items-center gap-2 rounded-md border border-border bg-smoke px-3 text-sm font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
+                        <span data-lucide="tag" class="h-4 w-4 shrink-0"></span>
+                        <span x-text="isEditing ? (tagNumber || 'Not assigned') : 'Auto-generated on save'"></span>
+                    </div>
+                    <div x-show="!isNoMachineBranch" class="relative">
                         <input
                             type="text"
                             name="tag_number"
                             x-model="tagNumber"
                             @input.debounce.300ms="checkTagAvailability()"
-                            :required="isNoMachineBranch"
+                            :disabled="isNoMachineBranch"
                             placeholder="e.g. TAG-001 or 12"
                             class="h-9 w-full rounded-md border bg-white px-3 pr-8 text-sm shadow-sm dark:border-gray-800 dark:bg-gray-950 font-medium"
                             :class="tagStatus === 'taken' ? 'border-red-500 focus:border-red-500 ring-1 ring-red-500' : (tagStatus === 'available' ? 'border-emerald-500 focus:border-emerald-500' : 'border-border')"
@@ -175,7 +189,7 @@
                             <span x-show="!tagChecking && tagStatus === 'taken'" data-lucide="alert-circle" class="h-4 w-4 text-red-500"></span>
                         </div>
                     </div>
-                    <p x-show="tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
+                    <p x-show="!isNoMachineBranch && tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
                     @error('tag_number')
                         <p class="mt-1 text-[11px] text-red-500">{{ $message }}</p>
                     @enderror
@@ -550,6 +564,10 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         get availableProcessingBranches() {
             return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
         },
+        customersTodayLabel(branch) {
+            const count = Number(branch.customers_today ?? 0);
+            return `${count} customer${count === 1 ? '' : 's'} today`;
+        },
         async checkTagAvailability() {
             const tag = (this.tagNumber || '').trim();
             if (!tag) {
@@ -600,7 +618,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
                 this.setDefaultProcessingBranch();
             }
             this.syncSelectedCustomer();
-            if (this.tagNumber) {
+            if (this.tagNumber && !this.isNoMachineBranch) {
                 this.checkTagAvailability();
             }
             

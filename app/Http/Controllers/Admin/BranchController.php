@@ -57,13 +57,14 @@ class BranchController extends Controller
             DefaultLaundryServices::seedForBranch($branch);
             DefaultInventoryItems::seedForBranch($branch);
             DefaultServiceInventoryUsages::seedForBranch($branch);
-            BranchSetting::firstOrCreate(
+            $setting = BranchSetting::firstOrCreate(
                 ['branch_id' => $branch->id],
                 [
                     'job_order_prefix' => $branch->code,
                     'invoice_prefix' => 'INV-'.$branch->code,
                 ]
             );
+            $setting->update($this->statementDetails($validated));
         });
 
         return redirect()
@@ -82,7 +83,17 @@ class BranchController extends Controller
         $validated['longitude'] = null;
         $validated['attendance_radius_meters'] = null;
 
-        $branch->update($validated);
+        DB::transaction(function () use ($branch, $validated) {
+            $branch->update($validated);
+
+            BranchSetting::firstOrCreate(
+                ['branch_id' => $branch->id],
+                [
+                    'job_order_prefix' => $branch->code,
+                    'invoice_prefix' => 'INV-'.$branch->code,
+                ]
+            )->update($this->statementDetails($validated));
+        });
 
         return redirect()
             ->route('admin.branches.index')
@@ -157,7 +168,20 @@ class BranchController extends Controller
             'machine_count' => ['nullable', 'integer', 'min:0', 'max:100'],
             'qr_pay_url' => ['nullable', 'string', 'max:2048'],
             'is_active' => ['nullable', 'boolean'],
+            'soa_tin' => ['nullable', 'string', 'max:100'],
+            'soa_bank_name' => ['nullable', 'string', 'max:191'],
+            'soa_account_name' => ['nullable', 'string', 'max:191'],
+            'soa_account_number' => ['nullable', 'string', 'max:100'],
+            'soa_email' => ['nullable', 'email', 'max:191'],
+            'soa_viber' => ['nullable', 'string', 'max:100'],
         ];
+    }
+
+    private function statementDetails(array $validated): array
+    {
+        return collect(array_keys(BranchSetting::SOA_DEFAULTS))
+            ->mapWithKeys(fn (string $key) => [$key => filled($validated[$key] ?? null) ? trim($validated[$key]) : null])
+            ->all();
     }
 
     private function authorizeBranch(Branch $branch): void

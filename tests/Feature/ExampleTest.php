@@ -1193,7 +1193,7 @@ class ExampleTest extends TestCase
             ->assertSee('Wash Cycles')
             ->assertSee('Dry Cycles')
             ->assertSee('Machine Counter Readings')
-            ->assertSee('lg:grid-cols-5', false)
+            ->assertSee('xl:grid-cols-4', false)
             ->assertSee('Beginning comes from the previous Z Reading ending')
             ->assertSeeInOrder(['Daily Operations Summary', 'Cash Count', 'Machine Counter Readings'])
             ->assertSeeInOrder(['Wash 1', 'Wash 5', 'Dry 1', 'Dry 5'])

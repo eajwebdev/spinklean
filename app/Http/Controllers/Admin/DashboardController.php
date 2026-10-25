@@ -143,7 +143,7 @@ class DashboardController extends Controller
             ->groupBy('status')
             ->pluck('total', 'status');
 
-        $statuses = ['pending', 'washing', 'drying', 'folding', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
+        $statuses = ['pending', 'washing', 'drying', 'folding', 'returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery', 'completed', 'cancelled'];
         $statusLabels = array_map(fn ($status) => StatusBadge::label($status), $statuses);
         $statusValues = array_map(fn ($status) => (int) ($statusRows[$status] ?? 0), $statuses);
 

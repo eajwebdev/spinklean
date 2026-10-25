@@ -2,7 +2,7 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Reports PDF</title>
+    <title>{{ $section ? ($sectionLabel ?? '').' Report' : 'Reports' }} PDF</title>
     <style>
         @page { margin: 24px; }
         body {
@@ -64,11 +64,16 @@
 <body>
     @php
         $currency = $settings->currency ?? 'PHP';
+        $section = $section ?? null;
+        // A single-tab PDF shows only that tab's sections; without a section every section is included.
+        $show = fn (string $key) => $section === null || $section === $key;
     @endphp
 
     <div class="header">
-        <h1>{{ $settings->business_name ?? 'Laundry System' }} Reports</h1>
-        <p class="muted">Sales, operations, unpaid balances, expenses, accounts payable, cash movements, SMS outcomes, inventory, and audit logs.</p>
+        <h1>{{ $settings->business_name ?? 'Laundry System' }} {{ $section ? ($sectionLabel ?? '').' Report' : 'Reports' }}</h1>
+        @unless($section)
+            <p class="muted">Sales, operations, unpaid balances, expenses, accounts payable, cash movements, SMS outcomes, inventory, and audit logs.</p>
+        @endunless
         <table class="meta">
             <tr>
                 <td><strong>Branch:</strong> {{ $branchName }}</td>
@@ -78,6 +83,7 @@
         </table>
     </div>
 
+    @if(! $section)
     <h2>Financial Reconciliation</h2>
     <p class="muted">Authoritative formula: cash collected + cash deposits/owner cash funding - store-cash expenses - cash withdrawals/remittances/payable repayments.</p>
     <table class="report">
@@ -97,7 +103,9 @@
             @endforeach
         </tbody>
     </table>
+    @endif
 
+    @if($show('z_reading'))
     <h2>Consolidated Z Reading</h2>
     <p class="muted">Daily end-of-day closings for the selected branch and date range. Previous payments received in this period: {{ $currency }} {{ number_format((float) $zPreviousPaymentTotal, 2) }}.</p>
     <table class="report">
@@ -126,7 +134,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('z_reading'))
     <h2>Daily Operations by Date</h2>
     <table class="report" style="font-size:7px;">
         <thead>
@@ -196,7 +206,9 @@
             </td>
         </tr>
     </table>
+    @endif
 
+    @if($show('operations'))
     <h2>Operational Summary</h2>
     <table class="report">
         <thead><tr><th class="right">Job Orders</th><th class="right">Rush Orders</th><th class="right">Loyal Customers</th><th class="right">Order Value</th><th class="right">Unpaid Balance</th><th class="right">SMS Sent</th><th class="right">SMS Failed</th><th class="right">SMS Queued</th></tr></thead>
@@ -211,7 +223,9 @@
             <td class="right">{{ number_format((int) ($smsSummary->queued ?? 0)) }}</td>
         </tr></tbody>
     </table>
+    @endif
 
+    @if($show('sales'))
     <h2>Sales by Date</h2>
     <table class="report">
         <thead>
@@ -231,7 +245,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('payables'))
     <h2>Accounts Payable Repayments</h2>
     <table class="report">
         <thead><tr><th>Date</th><th>Payment</th><th>Payable</th><th>Method</th><th>Reference</th><th class="right">Amount</th></tr></thead>
@@ -243,7 +259,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('cash'))
     <h2>Cash Drawer Movements</h2>
     <table class="report">
         <thead><tr><th>Date</th><th>Branch</th><th>Movement</th><th>Reference</th><th>Recorded By</th><th class="right">Amount</th></tr></thead>
@@ -258,7 +276,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('sales'))
     <h2>Sales by Branch</h2>
     <table class="report">
         <thead>
@@ -278,7 +298,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('sales'))
     <h2>Physical Collections by Branch</h2>
     <table class="report">
         <thead>
@@ -298,7 +320,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('sales'))
     <h2>Cross-Branch Collections for Remittance</h2>
     <table class="report">
         <thead>
@@ -319,7 +343,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('receivables'))
     <h2>Receivables</h2>
     <table class="report">
         <thead>
@@ -339,7 +365,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('inventory'))
     <h2>Inventory Usage</h2>
     <table class="report">
         <thead>
@@ -359,7 +387,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('payments'))
     <h2>Sales Payment Type</h2>
     <table class="report">
         <thead>
@@ -377,7 +407,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('payments'))
     <h2>GCash Reference Breakdown</h2>
     <table class="report">
         <thead>
@@ -398,7 +430,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('expenses'))
     <h2>Expenses</h2>
     <p class="muted">Store-funded: {{ $currency }} {{ number_format((float) ($expenseSummary->store_cash_expenses ?? 0), 2) }} | Owner-paid (for reimbursement): {{ $currency }} {{ number_format((float) ($expenseSummary->owner_expenses ?? 0), 2) }}</p>
     <table class="report">
@@ -419,7 +453,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('payables'))
     <h2>Accounts Payable</h2>
     <p class="muted">Original: {{ $currency }} {{ number_format((float) ($accountsPayableSummary->original_total ?? 0), 2) }} | Repaid: {{ $currency }} {{ number_format((float) ($accountsPayableSummary->paid_total ?? 0), 2) }} | Outstanding: {{ $currency }} {{ number_format((float) ($accountsPayableSummary->balance_total ?? 0), 2) }}</p>
     <table class="report">
@@ -432,7 +468,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('ledger'))
     <h2>Customer Ledger</h2>
     <table class="report">
         <thead>
@@ -452,7 +490,9 @@
             @endforelse
         </tbody>
     </table>
+    @endif
 
+    @if($show('activity'))
     <h2>Activity Logs</h2>
     <table class="report">
         <thead>
@@ -476,5 +516,7 @@
             @endforeach
         </tbody>
     </table>
+    @endif
+
 </body>
 </html>

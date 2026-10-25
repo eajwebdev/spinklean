@@ -10,6 +10,8 @@ class StatusBadge
         'drying' => 'border-cyan-200 bg-cyan-50 text-cyan-700 dark:border-cyan-900/60 dark:bg-cyan-500/10 dark:text-cyan-300',
         'folding' => 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900/60 dark:bg-purple-500/10 dark:text-purple-300',
         'ironing' => 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700 dark:border-fuchsia-900/60 dark:bg-fuchsia-500/10 dark:text-fuchsia-300',
+        'returning_to_branch' => 'border-purple-200 bg-purple-50 text-purple-700 dark:border-purple-900/60 dark:bg-purple-500/10 dark:text-purple-300',
+        'back_at_branch' => 'border-indigo-200 bg-indigo-50 text-indigo-700 dark:border-indigo-900/60 dark:bg-indigo-500/10 dark:text-indigo-300',
         'ready_for_pickup' => 'border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-900/60 dark:bg-teal-500/10 dark:text-teal-300',
         'ready_for_delivery' => 'border-orange-200 bg-orange-50 text-orange-700 dark:border-orange-900/60 dark:bg-orange-500/10 dark:text-orange-300',
         'completed' => 'border-green-200 bg-green-50 text-green-700 dark:border-green-900/60 dark:bg-green-500/10 dark:text-green-300',

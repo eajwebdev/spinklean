@@ -203,6 +203,26 @@
 <div class="page-break"></div>
 <div class="title" style="margin-bottom:6px;">MACHINE COUNTERS AND DETAILED CLOSING</div>
 
+@if($reading->branch?->isNoMachine())
+<table>
+    <tr><th colspan="3">Machine Cycles at Production Branches (laundry dropped off here)</th></tr>
+    <tr><th>Production Branch</th><th class="right">Wash</th><th class="right">Dry</th></tr>
+    @forelse($details['outsourced_cycles'] ?? [] as $outsourced)
+        <tr><td>{{ $outsourced['branch_name'] }}</td><td class="right">{{ $outsourced['wash'] }}</td><td class="right">{{ $outsourced['dry'] }}</td></tr>
+    @empty
+        <tr><td colspan="3">No cycles recorded for this date.</td></tr>
+    @endforelse
+</table>
+@else
+@if(! empty($details['dropoff_cycles']))
+<table style="margin-bottom:5px;">
+    <tr><th colspan="3">Included in Machine Counts: Laundry from Drop-off Branches</th></tr>
+    <tr><th>Drop-off Branch</th><th class="right">Wash</th><th class="right">Dry</th></tr>
+    @foreach($details['dropoff_cycles'] as $dropoff)
+        <tr><td>{{ $dropoff['branch_name'] }}</td><td class="right">{{ $dropoff['wash'] }}</td><td class="right">{{ $dropoff['dry'] }}</td></tr>
+    @endforeach
+</table>
+@endif
 <table>
     <tr>
         <td class="no-border" style="width:50%; padding-right:6px;">
@@ -217,6 +237,10 @@
                     <tr><td>Wash Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr><td>Wash Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Wash Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
+                    <tr><td>Cycle Monitoring</td><td class="right">{{ $counter['system_total'] ?? $systemCycles }}</td></tr>
+                    @if((int) ($counter['difference'] ?? 0) !== 0)
+                        <tr><td style="color:#b45309; font-weight:bold;">Difference</td><td class="right" style="color:#b45309; font-weight:bold;">{{ $counter['difference'] > 0 ? '+' : '' }}{{ $counter['difference'] }}</td></tr>
+                    @endif
                     @if($cleanCycles > 0)
                         <tr><td style="font-size:7pt; color:#2563eb;">Incl. Cleaning</td><td class="right" style="font-size:7pt; color:#2563eb;">+{{ $cleanCycles }}</td></tr>
                     @endif
@@ -235,6 +259,10 @@
                     <tr><td>Dry Beginning</td><td class="right">{{ isset($counter['beginning']) ? str_pad((string) $counter['beginning'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr><td>Dry Ending</td><td class="right">{{ isset($counter['ending']) ? str_pad((string) $counter['ending'], 4, '0', STR_PAD_LEFT) : '' }}</td></tr>
                     <tr class="blue"><td>Total Dry Cycle</td><td class="right">{{ $counter['total'] ?? $systemCycles }}</td></tr>
+                    <tr><td>Cycle Monitoring</td><td class="right">{{ $counter['system_total'] ?? $systemCycles }}</td></tr>
+                    @if((int) ($counter['difference'] ?? 0) !== 0)
+                        <tr><td style="color:#b45309; font-weight:bold;">Difference</td><td class="right" style="color:#b45309; font-weight:bold;">{{ $counter['difference'] > 0 ? '+' : '' }}{{ $counter['difference'] }}</td></tr>
+                    @endif
                     @if($cleanCycles > 0)
                         <tr><td style="font-size:7pt; color:#2563eb;">Incl. Cleaning</td><td class="right" style="font-size:7pt; color:#2563eb;">+{{ $cleanCycles }}</td></tr>
                     @endif
@@ -248,6 +276,7 @@
     <tr class="total"><td>Total Wash Cycle</td><td class="right">{{ number_format((int) (collect($reading->machine_counters)->sum(fn ($counter) => data_get($counter, 'wash.total', 0)) ?: $machineCycles->where('cycle_type', 'wash')->sum('cycle_count'))) }}</td></tr>
     <tr class="total"><td>Total Dry Cycle</td><td class="right">{{ number_format((int) (collect($reading->machine_counters)->sum(fn ($counter) => data_get($counter, 'dry.total', 0)) ?: $machineCycles->where('cycle_type', 'dry')->sum('cycle_count'))) }}</td></tr>
 </table>
+@endif
 
 <table style="margin-top:8px;">
     <tr>

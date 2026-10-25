@@ -91,7 +91,7 @@ class BillingSystemTest extends TestCase
             ->assertDontSee('Subscription Expired');
     }
 
-    public function test_expired_trial_allows_unpaid_and_missing_subscription_with_warnings(): void
+    public function test_expired_trial_locks_overdue_branch_and_warns_missing_subscription(): void
     {
         $this->completeSystemSettings();
         $this->expiredTrial(graceDays: 2);
@@ -138,23 +138,27 @@ class BillingSystemTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk();
 
+        // Due May 5, today May 10: overdue past the lock grace days, so the branch is locked.
         $this->actingAs($unpaidUser)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Your branch subscription for May 2026 is overdue');
+            ->assertSee('Subscription Payment Required')
+            ->assertSee('Your subscription is overdue. Please pay to continue using the system.')
+            ->assertSee('Scan QR to Pay');
 
         $this->actingAs($missingUser)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('No active branch subscription was found for May 2026')
+            ->assertSee('No active subscription was found for May 2026')
             ->assertSee('Subscription Warning');
     }
 
-    public function test_unpaid_branch_can_access_with_dismissible_warning(): void
+    public function test_overdue_branch_within_lock_grace_days_can_access_with_warning(): void
     {
+        config(['billing.lock_grace_days' => 2]);
         $this->completeSystemSettings();
         $this->expiredTrial(graceDays: 5);
-        $this->travelTo(Carbon::parse('2026-05-07'));
+        $this->travelTo(Carbon::parse('2026-05-06'));
 
         $branch = $this->createBranch('Grace Branch', 'GRACE');
         $user = User::factory()->create([
@@ -175,8 +179,9 @@ class BillingSystemTest extends TestCase
         $this->actingAs($user)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Your branch subscription for May 2026 is overdue')
-            ->assertSee('Dismiss billing notice');
+            ->assertSee('Your subscription for May 2026 is overdue by 1 day. Pay within 1 day to avoid a lockout.')
+            ->assertSee('Subscription Warning')
+            ->assertDontSee('Subscription Payment Required');
     }
 
     public function test_paid_current_subscription_suppresses_warning_even_with_other_open_record(): void
@@ -255,11 +260,12 @@ class BillingSystemTest extends TestCase
             ->assertDontSee('Billing paid');
     }
 
-    public function test_paid_subscription_auto_opens_upcoming_billing_notice_five_days_before_end(): void
+    public function test_paid_subscription_auto_opens_renewal_notice_before_end(): void
     {
+        config(['billing.notify_days_before' => 3]);
         $this->completeSystemSettings();
         $this->expiredTrial(graceDays: 0);
-        $this->travelTo(Carbon::parse('2026-06-25'));
+        $this->travelTo(Carbon::parse('2026-06-27'));
 
         $branch = $this->createBranch('Upcoming Billing Branch', 'UPB');
         $user = User::factory()->create([
@@ -283,16 +289,17 @@ class BillingSystemTest extends TestCase
             ->get(route('dashboard'))
             ->assertOk()
             ->assertSee('Upcoming Billing')
-            ->assertSee('Next billing is coming up in 5 days.')
+            ->assertSee('Your subscription ends in 3 days (Jun 30, 2026). Pay now to keep the system active.')
             ->assertSee('Subscription Notifications')
             ->assertSee('autoOpen: true', false);
     }
 
-    public function test_unpaid_billing_due_within_five_days_appears_in_notification_bell(): void
+    public function test_unpaid_billing_due_soon_appears_in_notification_bell(): void
     {
+        config(['billing.notify_days_before' => 3]);
         $this->completeSystemSettings();
         $this->expiredTrial(graceDays: 0);
-        $this->travelTo(Carbon::parse('2026-06-10'));
+        $this->travelTo(Carbon::parse('2026-06-12'));
 
         $branch = $this->createBranch('Due Soon Branch', 'DUE');
         $user = User::factory()->create([
@@ -318,7 +325,7 @@ class BillingSystemTest extends TestCase
             ->assertSee('Subscription Notifications')
             ->assertSee('Due Soon Branch - Billing due')
             ->assertSee('Jun 01, 2026 - Jun 30, 2026 is unpaid and due on Jun 15, 2026.')
-            ->assertSee('Your branch subscription for Jun 01, 2026 - Jun 30, 2026 is due in 5 days.')
+            ->assertSee('Your subscription for Jun 01, 2026 - Jun 30, 2026 is due on Jun 15, 2026. Pay now to avoid interruption.')
             ->assertSee('autoOpen: true', false);
     }
 
@@ -339,7 +346,7 @@ class BillingSystemTest extends TestCase
             ->assertDontSee('Branch subscription has expired');
     }
 
-    public function test_suspended_current_subscription_warns_branch_users_without_locking(): void
+    public function test_suspended_current_subscription_locks_branch_users(): void
     {
         $this->completeSystemSettings();
         $this->expiredTrial(graceDays: 0);
@@ -364,8 +371,8 @@ class BillingSystemTest extends TestCase
         $this->actingAs($user)
             ->get(route('dashboard'))
             ->assertOk()
-            ->assertSee('Branch subscription has been suspended')
-            ->assertSee('Subscription Warning');
+            ->assertSee('Subscription Payment Required')
+            ->assertSee('Your branch subscription has been suspended. Settle the outstanding balance to continue.');
     }
 
     public function test_super_admin_generates_billing_and_updates_only_unpaid_records(): void
