@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\Branch;
 use App\Models\Customer;
-use App\Models\CustomerLedger;
 use App\Models\CycleRecord;
 use App\Models\Inventory;
 use App\Models\JobOrder;
@@ -27,13 +26,21 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     use RefreshDatabase;
 
     private Branch $branch1;
+
     private Branch $branch2;
+
     private Branch $branch3;
+
     private User $b1User;
+
     private User $b2User;
+
     private User $b3User;
+
     private User $admin;
+
     private Customer $b3Customer;
+
     private LaundryService $b3Service;
 
     protected function setUp(): void
@@ -136,9 +143,9 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 1: Create JO at Branch 3 with manual tag number -> succeeds.
+     * Case 1: The first Branch 3 order gets daily tag 001 and ignores manual input.
      */
-    public function test_case_01_create_jo_at_branch_3_with_manual_tag_number_succeeds(): void
+    public function test_case_01_create_jo_at_branch_3_auto_generates_first_daily_tag(): void
     {
         $response = $this->actingAs($this->b3User)->post(route('admin.job-orders.store'), [
             'branch_id' => $this->branch3->id,
@@ -158,16 +165,16 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $response->assertRedirect(route('admin.job-orders.index'));
 
         $order = JobOrder::where('customer_id', $this->b3Customer->id)->firstOrFail();
-        $this->assertSame('TAG-101', $order->tag_number);
+        $this->assertSame('001', $order->tag_number);
         $this->assertSame($this->branch3->id, $order->branch_id);
         $this->assertSame($this->branch1->id, $order->processing_branch_id);
         $this->assertSame('pending', $order->status);
     }
 
     /**
-     * Case 2: Create JO at Branch 3 with empty tag number -> fails validation.
+     * Case 2: Empty input is accepted and consecutive orders receive 001, 002.
      */
-    public function test_case_02_create_jo_at_branch_3_with_empty_tag_number_fails_validation(): void
+    public function test_case_02_create_jo_at_branch_3_assigns_consecutive_daily_tags(): void
     {
         $response = $this->actingAs($this->b3User)->post(route('admin.job-orders.store'), [
             'branch_id' => $this->branch3->id,
@@ -184,16 +191,30 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transaction_type' => 'walk_in',
         ]);
 
-        $response->assertSessionHasErrors(['tag_number']);
-        $this->assertDatabaseMissing('job_orders', [
+        $response->assertRedirect(route('admin.job-orders.index'));
+
+        $secondResponse = $this->actingAs($this->b3User)->post(route('admin.job-orders.store'), [
+            'branch_id' => $this->branch3->id,
+            'processing_branch_id' => $this->branch1->id,
             'customer_id' => $this->b3Customer->id,
+            'items' => [[
+                'laundry_service_id' => $this->b3Service->id,
+                'description' => $this->b3Service->name,
+                'quantity' => 1,
+                'unit_price' => 150,
+            ]],
+            'paid_amount' => 0,
+            'transaction_type' => 'walk_in',
         ]);
+
+        $secondResponse->assertRedirect(route('admin.job-orders.index'));
+        $this->assertSame(['001', '002'], JobOrder::query()->orderBy('id')->pluck('tag_number')->all());
     }
 
     /**
-     * Case 3: Create JO at Branch 3 with duplicate tag number (active) -> fails validation.
+     * Case 3: A submitted manual tag is ignored at a no-machine branch.
      */
-    public function test_case_03_create_jo_at_branch_3_with_duplicate_tag_number_fails_validation(): void
+    public function test_case_03_create_jo_at_branch_3_ignores_submitted_manual_tag(): void
     {
         // Existing active order using TAG-DUPLICATE
         JobOrder::query()->create([
@@ -224,7 +245,12 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transaction_type' => 'walk_in',
         ]);
 
-        $response->assertSessionHasErrors(['tag_number']);
+        $response->assertRedirect(route('admin.job-orders.index'));
+        $this->assertDatabaseHas('job_orders', [
+            'customer_id' => $this->b3Customer->id,
+            'tag_number' => '001',
+            'status' => 'pending',
+        ]);
     }
 
     /**
@@ -299,11 +325,11 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transaction_type' => 'walk_in',
         ]);
 
-        $order = JobOrder::where('tag_number', 'TAG-TRANSFER-01')->firstOrFail();
+        $order = JobOrder::where('customer_id', $this->b3Customer->id)->firstOrFail();
 
         $this->assertDatabaseHas('job_order_transfers', [
             'job_order_id' => $order->id,
-            'tag_number' => 'TAG-TRANSFER-01',
+            'tag_number' => '001',
             'origin_branch_id' => $this->branch3->id,
             'destination_branch_id' => $this->branch1->id,
             'transfer_type' => 'outbound',
@@ -671,7 +697,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transaction_type' => 'walk_in',
         ]);
 
-        $order = JobOrder::where('tag_number', 'TAG-INV-CHECK')->firstOrFail();
+        $order = JobOrder::where('customer_id', $this->b3Customer->id)->firstOrFail();
         $transfer = JobOrderTransfer::where('job_order_id', $order->id)->firstOrFail();
 
         $this->assertSame('100.00', $invB3->fresh()->quantity);
@@ -1273,9 +1299,9 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
-     * Case 27: Editing Tag Number on a pending job order updates the pending transfer record.
+     * Case 27: An auto-generated tag cannot be changed while editing an order.
      */
-    public function test_case_27_editing_tag_number_on_pending_job_order_updates_pending_transfer(): void
+    public function test_case_27_editing_no_machine_order_preserves_tag_and_pending_transfer(): void
     {
         $order = JobOrder::query()->create([
             'branch_id' => $this->branch3->id,
@@ -1325,10 +1351,10 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $response->assertRedirect();
 
         $order->refresh();
-        $this->assertSame('TAG-NEW-VAL', $order->tag_number);
+        $this->assertSame('TAG-OLD-VAL', $order->tag_number);
 
         $transfer->refresh();
-        $this->assertSame('TAG-NEW-VAL', $transfer->tag_number);
+        $this->assertSame('TAG-OLD-VAL', $transfer->tag_number);
     }
 
     /**
@@ -1428,5 +1454,29 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         // Branch 3 user cannot access cycles menu
         $cycleResponse = $this->actingAs($this->b3User)->get(route('admin.cycles.index'));
         $cycleResponse->assertStatus(403);
+    }
+
+    public function test_daily_auto_tag_restarts_at_001_after_prior_day_tag_is_released(): void
+    {
+        $order = JobOrder::query()->create([
+            'branch_id' => $this->branch3->id,
+            'processing_branch_id' => $this->branch1->id,
+            'customer_id' => $this->b3Customer->id,
+            'job_order_number' => 'JO-YESTERDAY-001',
+            'tag_number' => '001',
+            'status' => 'completed',
+            'completed_at' => now()->subDay(),
+            'released_at' => now()->subDay(),
+            'subtotal' => 150,
+            'total' => 150,
+            'paid_amount' => 150,
+            'balance' => 0,
+        ]);
+        $order->timestamps = false;
+        $order->created_at = now()->subDay();
+        $order->updated_at = now()->subDay();
+        $order->save();
+
+        $this->assertSame('001', TagValidator::nextDailyTag());
     }
 }

@@ -66,6 +66,40 @@ class TagValidator
     }
 
     /**
+     * Next auto-generated tag for no-machine branches: "001", "002", ... restarting
+     * every day, skipping any number still unavailable under the rules above.
+     */
+    public static function nextDailyTag(?Carbon $date = null): string
+    {
+        $targetDate = ($date ?: Carbon::now(config('app.timezone', 'Asia/Manila')))->toDateString();
+
+        $taken = JobOrder::query()
+            ->whereNotNull('tag_number')
+            ->where(function ($query) use ($targetDate) {
+                $query->whereDate('created_at', $targetDate)
+                    ->orWhereDate('completed_at', $targetDate)
+                    ->orWhereDate('released_at', $targetDate)
+                    ->orWhere(function ($active) {
+                        $active->where('status', '!=', 'cancelled')
+                            ->where(function ($q) {
+                                $q->where('status', '!=', 'completed')
+                                    ->orWhereNull('released_at');
+                            });
+                    });
+            })
+            ->pluck('tag_number')
+            ->map(fn ($tag) => trim((string) $tag))
+            ->flip();
+
+        $number = 1;
+        while ($taken->has($tag = str_pad((string) $number, 3, '0', STR_PAD_LEFT))) {
+            $number++;
+        }
+
+        return $tag;
+    }
+
+    /**
      * Check if a tag is available (returns null if available, or error string if unavailable).
      */
     public static function checkAvailability(string $tagNumber, ?int $ignoreJobOrderId = null, ?Carbon $date = null): ?string

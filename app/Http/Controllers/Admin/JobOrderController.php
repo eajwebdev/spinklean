@@ -300,19 +300,15 @@ class JobOrderController extends Controller
         $originBranch = Branch::query()->findOrFail($validated['branch_id']);
 
         if ($originBranch->isNoMachine()) {
-            if (empty(trim((string) ($validated['tag_number'] ?? '')))) {
-                throw ValidationException::withMessages([
-                    'tag_number' => 'Tag Number is required for drop-off orders.',
-                ]);
-            }
             if (empty($validated['processing_branch_id'])) {
                 throw ValidationException::withMessages([
                     'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
                 ]);
             }
-        }
 
-        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            // No-machine branches get an auto-generated daily tag inside the transaction.
+            $validated['tag_number'] = null;
+        } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
             $validated['tag_number'] = TagValidator::validate($validated['tag_number']);
         } else {
             $validated['tag_number'] = null;
@@ -356,6 +352,12 @@ class JobOrderController extends Controller
             $total = $taxable + $tax;
             $paymentType = $validated['payment_type'] ?? 'cash';
             $customer = Customer::query()->find($validated['customer_id']);
+
+            if ($originBranch->isNoMachine()) {
+                // Serialize tag generation across no-machine branches so two cashiers can't get the same number.
+                Branch::query()->whereIn('branch_type', ['pickup_dropoff', 'no_machine'])->orderBy('id')->lockForUpdate()->get();
+                $validated['tag_number'] = TagValidator::nextDailyTag();
+            }
             $isPoTransaction = $paymentType === 'po' || $customer?->billing_type === 'po';
             $paid = in_array($paymentType, ['unpaid', 'po'], true) || $isPoTransaction
                 ? 0
@@ -471,7 +473,9 @@ class JobOrderController extends Controller
 
             $createdOrder = $order;
 
-            return redirect()->route('admin.job-orders.index')->with('success', 'Job order created successfully.');
+            return redirect()->route('admin.job-orders.index')->with('success', $order->tag_number && $originBranch->isNoMachine()
+                ? "Job order created successfully. Tag #{$order->tag_number}."
+                : 'Job order created successfully.');
         });
 
         $shouldSendSms = $request->has('send_sms')
@@ -508,14 +512,10 @@ class JobOrderController extends Controller
         ]);
 
         if ($jobOrder->branch?->isNoMachine()) {
-            if (empty(trim((string) ($validated['tag_number'] ?? $jobOrder->tag_number)))) {
-                throw ValidationException::withMessages([
-                    'tag_number' => 'Tag Number is required for drop-off orders.',
-                ]);
-            }
-        }
-
-        if (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+            // Auto-generated tags can't be edited. Do not silently assign a current-day
+            // tag when an older legacy order without a tag is edited.
+            $validated['tag_number'] = $jobOrder->tag_number;
+        } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
             $validated['tag_number'] = TagValidator::validate($validated['tag_number'], $jobOrder->id);
         } else {
             $validated['tag_number'] = $jobOrder->tag_number;

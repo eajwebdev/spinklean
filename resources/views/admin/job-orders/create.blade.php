@@ -162,20 +162,22 @@
                 <!-- Laundry Tag # -->
                 <div>
                     <div class="flex items-center justify-between mb-1">
-                        <label class="block text-[10px] font-medium text-muted">
-                            Laundry Tag #
-                            <span x-show="isNoMachineBranch" class="text-red-500 font-bold">*</span>
-                        </label>
-                        <span x-show="tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
-                        <span x-show="tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
+                        <label class="block text-[10px] font-medium text-muted">Laundry Tag #</label>
+                        <span x-show="isNoMachineBranch" class="text-[10px] font-medium text-primary">Auto</span>
+                        <span x-show="!isNoMachineBranch && tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
+                        <span x-show="!isNoMachineBranch && tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
                     </div>
-                    <div class="relative">
+                    <div x-show="isNoMachineBranch" class="flex h-9 w-full items-center gap-2 rounded-md border border-border bg-smoke px-3 text-sm font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
+                        <span data-lucide="tag" class="h-4 w-4 shrink-0"></span>
+                        <span x-text="isEditing ? (tagNumber || 'Not assigned') : 'Auto-generated on save'"></span>
+                    </div>
+                    <div x-show="!isNoMachineBranch" class="relative">
                         <input
                             type="text"
                             name="tag_number"
                             x-model="tagNumber"
                             @input.debounce.300ms="checkTagAvailability()"
-                            :required="isNoMachineBranch"
+                            :disabled="isNoMachineBranch"
                             placeholder="e.g. TAG-001 or 12"
                             class="h-9 w-full rounded-md border bg-white px-3 pr-8 text-sm shadow-sm dark:border-gray-800 dark:bg-gray-950 font-medium"
                             :class="tagStatus === 'taken' ? 'border-red-500 focus:border-red-500 ring-1 ring-red-500' : (tagStatus === 'available' ? 'border-emerald-500 focus:border-emerald-500' : 'border-border')"
@@ -187,7 +189,7 @@
                             <span x-show="!tagChecking && tagStatus === 'taken'" data-lucide="alert-circle" class="h-4 w-4 text-red-500"></span>
                         </div>
                     </div>
-                    <p x-show="tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
+                    <p x-show="!isNoMachineBranch && tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
                     @error('tag_number')
                         <p class="mt-1 text-[11px] text-red-500">{{ $message }}</p>
                     @enderror
@@ -616,7 +618,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
                 this.setDefaultProcessingBranch();
             }
             this.syncSelectedCustomer();
-            if (this.tagNumber) {
+            if (this.tagNumber && !this.isNoMachineBranch) {
                 this.checkTagAvailability();
             }
             
