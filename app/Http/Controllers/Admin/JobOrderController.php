@@ -477,11 +477,8 @@ class JobOrderController extends Controller
                 : 'Job order created successfully.');
         });
 
-        $shouldSendSms = $request->has('send_sms')
-            ? $request->boolean('send_sms')
-            : SystemSetting::current()->sms_enabled;
-
-        if ($shouldSendSms && $createdOrder) {
+        // The order-received SMS is opt-in: it only goes out when the cashier ticks "Send SMS".
+        if ($request->boolean('send_sms') && $createdOrder) {
             SmsNotifier::jobOrderReceived($createdOrder);
         }
 

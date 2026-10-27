@@ -13,6 +13,14 @@
                 this.loadTransfers();
             });
 
+            // Keep the list live while it is open so newly transferred tags appear without a reload.
+            window.addEventListener('incoming-tags-changed', (event) => {
+                this.count = event.detail.count;
+                if (this.open && !this.submitting) {
+                    this.loadTransfers();
+                }
+            });
+
             this.$watch('open', (val) => {
                 if (val && this.transfers.length === 0) {
                     this.loadTransfers();
@@ -125,6 +133,7 @@
 
                     this.selectedIds = [];
                     await this.loadTransfers();
+                    window.dispatchEvent(new CustomEvent('tags-updated'));
 
                     // If currently on cycles index page, reload to refresh cycle list
                     if (window.location.pathname.includes('/admin/cycles')) {

@@ -89,6 +89,7 @@
         }"
         x-init="checkIncoming()"
         @tags-updated.window="checkIncoming()"
+        @incoming-tags-changed.window="pendingCount = $event.detail.count"
         x-show="pendingCount > 0"
         x-cloak
         class="flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-3.5 text-amber-900 shadow-sm dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300 sm:flex-row sm:items-center sm:justify-between"
