@@ -190,6 +190,44 @@
                                         </div>
                                     </div>
                                 @endforeach
+
+                                @php($cycleSources = $machineCycleSourcesByBranch[$machineBranch->id] ?? null)
+                                @if($cycleSources)
+                                    <div class="rounded-lg border border-border dark:border-gray-800">
+                                        <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2 dark:border-gray-800">
+                                            <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted">Machine cycle count</h4>
+                                            <span class="text-[11px] text-muted">{{ $cycleSources['since'] ? 'Since Z Reading '.$cycleSources['since']->format('M d, Y') : 'All recorded cycles (no Z Reading yet)' }}</span>
+                                        </div>
+                                        <table class="w-full text-xs">
+                                            <thead>
+                                                <tr class="text-left text-[10px] uppercase tracking-wide text-muted">
+                                                    <th class="px-3 py-1.5 font-semibold">Laundry from</th>
+                                                    <th class="px-3 py-1.5 text-right font-semibold">Wash</th>
+                                                    <th class="px-3 py-1.5 text-right font-semibold">Dry</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr class="border-t border-border dark:border-gray-800">
+                                                    <td class="px-3 py-1.5">{{ $machineBranch->name }} (own orders)</td>
+                                                    <td class="px-3 py-1.5 text-right font-semibold text-sky-600">{{ $cycleSources['own']['wash'] }}</td>
+                                                    <td class="px-3 py-1.5 text-right font-semibold text-violet-600">{{ $cycleSources['own']['dry'] }}</td>
+                                                </tr>
+                                                @foreach($cycleSources['dropoffs'] as $dropoff)
+                                                    <tr class="border-t border-border dark:border-gray-800">
+                                                        <td class="px-3 py-1.5">{{ $dropoff['branch_name'] }} <span class="text-muted">(no machine)</span></td>
+                                                        <td class="px-3 py-1.5 text-right font-semibold text-sky-600">{{ $dropoff['wash'] }}</td>
+                                                        <td class="px-3 py-1.5 text-right font-semibold text-violet-600">{{ $dropoff['dry'] }}</td>
+                                                    </tr>
+                                                @endforeach
+                                                <tr class="border-t-2 border-border bg-smoke font-bold dark:border-gray-800 dark:bg-gray-950">
+                                                    <td class="px-3 py-1.5">Total machine cycles</td>
+                                                    <td class="px-3 py-1.5 text-right text-sky-600">{{ $cycleSources['total']['wash'] }}</td>
+                                                    <td class="px-3 py-1.5 text-right text-violet-600">{{ $cycleSources['total']['dry'] }}</td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                @endif
                             </div>
                         @else
                             <p class="w-full rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted dark:border-gray-800">No machines configured.</p>

@@ -438,10 +438,9 @@ class JobOrderController extends Controller
             }
 
             if ($paid > 0 && ! $isPoTransaction) {
-                $collectedBranchId = $this->collectedBranchId($request, $order);
                 $payment = Payment::create([
                     'branch_id' => $order->branch_id,
-                    'collected_branch_id' => $collectedBranchId,
+                    'collected_branch_id' => $order->branch_id,
                     'job_order_id' => $order->id,
                     'customer_id' => $order->customer_id,
                     'received_by' => $user->id,
@@ -449,7 +448,7 @@ class JobOrderController extends Controller
                     'payment_type' => $paymentType,
                     'reference_no' => $validated['payment_reference_no'] ?? null,
                     'amount' => $paid,
-                    'settlement_status' => $collectedBranchId === (int) $order->branch_id ? 'local' : 'pending',
+                    'settlement_status' => 'local',
                     'paid_at' => now(),
                 ]);
 
@@ -977,6 +976,11 @@ class JobOrderController extends Controller
 
         abort_unless($productionBranch && $productionBranch->isMachineEquipped(), 403);
         abort_if(in_array($jobOrder->status, ['completed', 'cancelled'], true), 422, 'Completed or cancelled job orders cannot be accepted for production.');
+        abort_if(
+            in_array($jobOrder->status, ['returning_to_branch', 'back_at_branch', 'ready_for_pickup', 'ready_for_delivery'], true),
+            422,
+            'This laundry was already sent back to its drop-off branch.'
+        );
 
         $jobOrder->loadMissing('branch');
         abort_unless($jobOrder->branch?->isNoMachine(), 422, 'Only pickup/drop-off orders can be accepted by production scan.');
@@ -1032,11 +1036,6 @@ class JobOrderController extends Controller
         ], $jobOrder->branch_id);
 
         return $productionBranch;
-    }
-
-    private function collectedBranchId(Request $request, JobOrder $order): int
-    {
-        return (int) ($request->user()->branch_id ?: $order->branch_id);
     }
 
     private function syncPoTransaction(JobOrder $order, ?string $poNumber = null): void

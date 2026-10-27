@@ -38,14 +38,9 @@ class ReceivableController extends Controller
             ->financiallyActive()
             ->where('balance', '>', 0)
             ->regularReceivable()
-            ->when(! $canChooseBranch, fn ($query) => $query->where(fn ($query) => $query
-                ->where('branch_id', $user->branch_id)
-                ->orWhere('current_branch_id', $user->branch_id)
-                ->orWhere('release_branch_id', $user->branch_id)))
-            ->when($request->filled('branch_id') && $canChooseBranch, fn ($query) => $query->where(fn ($query) => $query
-                ->where('branch_id', $request->branch_id)
-                ->orWhere('current_branch_id', $request->branch_id)
-                ->orWhere('release_branch_id', $request->branch_id)))
+            // Receivables belong to the drop-off branch only, even while another branch processes the laundry.
+            ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
+            ->when($request->filled('branch_id') && $canChooseBranch, fn ($query) => $query->where('branch_id', $request->branch_id))
             ->when(in_array($request->billing_type, self::UI_BILLING_TYPES, true), fn ($query) => $query->whereHas('customer', fn ($query) => $query->where('billing_type', $request->billing_type)))
             ->when(in_array($request->status, self::STATUSES, true), fn ($query) => $query->where('status', $request->status))
             ->when($request->filled('search'), function ($query) use ($request) {
@@ -109,11 +104,11 @@ class ReceivableController extends Controller
 
         DB::transaction(function () use ($validated, $jobOrder, $request) {
             $amount = (float) $validated['amount'];
-            $collectedBranchId = $this->collectedBranchId($request, $jobOrder);
 
+            // Payments are always collected by and credited to the drop-off branch.
             $payment = Payment::create([
                 'branch_id' => $jobOrder->branch_id,
-                'collected_branch_id' => $collectedBranchId,
+                'collected_branch_id' => $jobOrder->branch_id,
                 'job_order_id' => $jobOrder->id,
                 'customer_id' => $jobOrder->customer_id,
                 'received_by' => $request->user()->id,
@@ -122,7 +117,7 @@ class ReceivableController extends Controller
                 'reference_no' => $validated['reference_no'] ?? null,
                 'amount' => $amount,
                 'remarks' => $validated['remarks'] ?? null,
-                'settlement_status' => $collectedBranchId === (int) $jobOrder->branch_id ? 'local' : 'pending',
+                'settlement_status' => 'local',
                 'paid_at' => now(),
             ]);
 
@@ -164,16 +159,8 @@ class ReceivableController extends Controller
             return;
         }
 
-        abort_unless(in_array((int) $user->branch_id, [
-            (int) $jobOrder->branch_id,
-            (int) ($jobOrder->current_branch_id ?: $jobOrder->branch_id),
-            (int) ($jobOrder->release_branch_id ?: $jobOrder->branch_id),
-        ], true), 403);
-    }
-
-    private function collectedBranchId(Request $request, JobOrder $jobOrder): int
-    {
-        return (int) ($request->user()->branch_id ?: ($jobOrder->release_branch_id ?: $jobOrder->branch_id));
+        // Only the drop-off branch takes payment; a processing branch never collects for another branch's order.
+        abort_unless((int) $user->branch_id === (int) $jobOrder->branch_id, 403);
     }
 
     private function canChooseBranch($user): bool
