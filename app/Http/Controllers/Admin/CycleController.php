@@ -236,7 +236,7 @@ class CycleController extends Controller
             ->get()
             ->keyBy('branch_id') : collect();
 
-        $machineCycleIncrementsByBranch = $hasMachineOverview ? DB::table('cycle_records')
+        $machineCycleRows = $hasMachineOverview ? DB::table('cycle_records')
             ->join('job_orders', 'job_orders.id', '=', 'cycle_records.job_order_id')
             ->whereNull('job_orders.deleted_at')
             ->where('job_orders.status', '!=', 'cancelled')
@@ -253,22 +253,54 @@ class CycleController extends Controller
                     });
                 }
             })
-            ->groupByRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id), cycle_records.machine_number, cycle_records.cycle_type')
+            ->groupByRaw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id), job_orders.branch_id, cycle_records.machine_number, cycle_records.cycle_type')
             ->get([
                 DB::raw('COALESCE(job_orders.processing_branch_id, job_orders.branch_id) as operating_branch_id'),
+                'job_orders.branch_id as dropoff_branch_id',
                 'cycle_records.machine_number',
                 'cycle_records.cycle_type',
                 DB::raw('COUNT(*) as aggregate'),
-            ])
+            ]) : collect();
+
+        $cycleTotals = fn ($records) => [
+            'wash' => (int) $records->where('cycle_type', 'wash')->sum('aggregate'),
+            'dry' => (int) $records->where('cycle_type', 'dry')->sum('aggregate'),
+        ];
+
+        $machineCycleIncrementsByBranch = $machineCycleRows
             ->groupBy('operating_branch_id')
             ->map(fn ($records) => $records
                 ->groupBy('machine_number')
-                ->map(fn ($machineRecords) => [
-                    'wash' => (int) ($machineRecords->firstWhere('cycle_type', 'wash')?->aggregate ?? 0),
-                    'dry' => (int) ($machineRecords->firstWhere('cycle_type', 'dry')?->aggregate ?? 0),
-                ])
+                ->map($cycleTotals)
                 ->all())
-            ->all() : [];
+            ->all();
+
+        // Washes/dries counted on the machine readings, split into this branch's own orders and
+        // laundry sent in by drop-off (no-machine) branches, so the readings add up exactly.
+        $dropoffBranchNames = Branch::query()
+            ->whereIn('id', $machineCycleRows->pluck('dropoff_branch_id')->unique())
+            ->pluck('name', 'id');
+        $machineCycleSourcesByBranch = $machineOverviewBranches
+            ->mapWithKeys(function (Branch $branch) use ($machineCycleRows, $cycleTotals, $dropoffBranchNames, $latestZReadingsByBranch) {
+                $records = $machineCycleRows->where('operating_branch_id', $branch->id);
+
+                return [$branch->id => [
+                    'since' => $latestZReadingsByBranch->get($branch->id)?->business_date,
+                    'own' => $cycleTotals($records->where('dropoff_branch_id', $branch->id)),
+                    'dropoffs' => $records
+                        ->where('dropoff_branch_id', '!=', $branch->id)
+                        ->groupBy('dropoff_branch_id')
+                        ->map(fn ($dropoffRecords, $dropoffBranchId) => [
+                            'branch_name' => $dropoffBranchNames[$dropoffBranchId] ?? 'Other branch',
+                            ...$cycleTotals($dropoffRecords),
+                        ])
+                        ->sortBy('branch_name')
+                        ->values()
+                        ->all(),
+                    'total' => $cycleTotals($records),
+                ]];
+            })
+            ->all();
 
         $machineCounterReadingsByBranch = $machineOverviewBranches
             ->mapWithKeys(function (Branch $branch) use ($latestZReadingsByBranch, $machineCycleIncrementsByBranch) {
@@ -297,6 +329,7 @@ class CycleController extends Controller
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
             'machineCounterReadingsByBranch' => $machineCounterReadingsByBranch,
+            'machineCycleSourcesByBranch' => $machineCycleSourcesByBranch,
             'machineOverviewBranches' => $machineOverviewBranches,
             'selectedBranchId' => $selectedBranchId,
             'selectedCustomerId' => $selectedCustomerId,
@@ -701,12 +734,15 @@ class CycleController extends Controller
             return;
         }
 
+        if ((int) $jobOrder->branch_id === (int) $request->user()->branch_id) {
+            return;
+        }
+
+        // A processing branch only runs cycles on another branch's laundry while it is in production here.
         abort_unless(
-            (int) $jobOrder->branch_id === (int) $request->user()->branch_id
-                || (
-                    (int) ($jobOrder->processing_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id
-                    && $jobOrder->production_accepted_at
-                ),
+            (int) ($jobOrder->processing_branch_id ?: $jobOrder->branch_id) === (int) $request->user()->branch_id
+                && $jobOrder->production_accepted_at
+                && ! in_array($jobOrder->status, self::DONE_STATUSES, true),
             403
         );
     }

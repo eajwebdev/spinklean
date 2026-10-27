@@ -111,8 +111,7 @@ class PaymentController extends Controller
 
         abort_unless(
             $this->canChooseBranch($user)
-                || (int) $payment->branch_id === (int) $user->branch_id
-                || (int) ($payment->collected_branch_id ?: $payment->branch_id) === (int) $user->branch_id,
+                || (int) $payment->branch_id === (int) $user->branch_id,
             403
         );
 

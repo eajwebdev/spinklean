@@ -1004,6 +1004,91 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     /**
      * Case 19: Collect remaining payment at Branch 3 -> recorded under Branch 3, balance 0.
      */
+    public function test_processing_branch_cannot_take_payment_for_branch_3_order_and_payments_stay_with_branch_3(): void
+    {
+        $order = $this->createAcceptedBranch3Order('JO-PAY-GUARD', 'washing');
+        $this->b1User->update(['access' => ['cycles', 'job_orders', 'inventory', 'receivables']]);
+
+        $this->actingAs($this->b1User)
+            ->post(route('admin.job-orders.payments.store', $order), ['amount' => 50, 'payment_type' => 'cash'])
+            ->assertForbidden();
+        $this->actingAs($this->b1User)
+            ->post(route('admin.receivables.payments.store', $order), ['amount' => 50, 'payment_type' => 'cash'])
+            ->assertForbidden();
+        $this->actingAs($this->b1User)
+            ->get(route('admin.receivables.index'))
+            ->assertOk()
+            ->assertDontSee('JO-PAY-GUARD');
+
+        $this->assertSame('0.00', $order->fresh()->paid_amount);
+        $this->assertDatabaseCount('payments', 0);
+
+        // Branch 3 and admins can collect, and the payment is always credited to Branch 3.
+        $this->actingAs($this->b3User)
+            ->post(route('admin.job-orders.payments.store', $order), ['amount' => 50, 'payment_type' => 'cash'])
+            ->assertRedirect();
+        $this->actingAs($this->admin)
+            ->post(route('admin.job-orders.payments.store', $order), ['amount' => 25, 'payment_type' => 'gcash', 'reference_no' => 'REF1'])
+            ->assertRedirect();
+
+        $this->assertSame('75.00', $order->fresh()->paid_amount);
+        $this->assertSame(2, Payment::where('job_order_id', $order->id)
+            ->where('branch_id', $this->branch3->id)
+            ->where('collected_branch_id', $this->branch3->id)
+            ->where('settlement_status', 'local')
+            ->count());
+    }
+
+    public function test_processing_branch_cannot_touch_branch_3_order_after_sending_it_back(): void
+    {
+        $order = $this->createAcceptedBranch3Order('JO-SENT-BACK', 'ready_for_pickup');
+        $order->update([
+            'current_branch_id' => $this->branch3->id,
+            'release_branch_id' => $this->branch3->id,
+            'returned_to_branch_at' => now(),
+            'returned_received_at' => now(),
+        ]);
+
+        $this->actingAs($this->b1User)
+            ->post(route('admin.cycles.store', $order), ['cycle_type' => 'wash', 'machine_numbers' => [1]])
+            ->assertForbidden();
+        $this->actingAs($this->b1User)
+            ->patch(route('admin.cycles.status', $order), ['status' => 'completed'])
+            ->assertForbidden();
+        $this->actingAs($this->b1User)
+            ->get(route('admin.cycles.scan', $order))
+            ->assertStatus(422);
+
+        $order->refresh();
+        $this->assertSame('ready_for_pickup', $order->status);
+        $this->assertSame($this->branch3->id, $order->current_branch_id);
+        $this->assertSame(0, $order->cycles()->count());
+
+        // Printing the receipt is still allowed.
+        $this->actingAs($this->b1User)
+            ->get(route('admin.job-orders.receipt', $order))
+            ->assertOk();
+    }
+
+    private function createAcceptedBranch3Order(string $jobOrderNumber, string $status): JobOrder
+    {
+        return JobOrder::query()->create([
+            'branch_id' => $this->branch3->id,
+            'processing_branch_id' => $this->branch1->id,
+            'current_branch_id' => $this->branch1->id,
+            'release_branch_id' => $this->branch1->id,
+            'production_accepted_at' => now(),
+            'customer_id' => $this->b3Customer->id,
+            'job_order_number' => $jobOrderNumber,
+            'tag_number' => '001',
+            'status' => $status,
+            'subtotal' => 150,
+            'total' => 150,
+            'paid_amount' => 0,
+            'balance' => 150,
+        ]);
+    }
+
     public function test_case_19_collect_remaining_payment_at_branch_3_records_under_branch_3_and_clears_balance(): void
     {
         $order = JobOrder::query()->create([

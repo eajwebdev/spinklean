@@ -776,6 +776,68 @@ class CycleMonitoringTest extends TestCase
             ->assertDontSee('Cumulative usage since the first recorded cycle');
     }
 
+    public function test_machine_cycle_count_adds_up_own_and_no_machine_branch_washes(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $productionBranch = $this->createBranch([
+            'name' => 'Main Production',
+            'code' => 'MAINPROD',
+            'branch_type' => 'full_service',
+            'machine_count' => 2,
+        ]);
+        $dropoffBranch = $this->createBranch([
+            'name' => 'Counter Three',
+            'code' => 'COUNTER3',
+            'branch_type' => 'no_machine',
+            'machine_count' => 0,
+        ]);
+        $user = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $productionBranch->id,
+            'access' => ['cycles'],
+        ]);
+
+        $ownOrder = $this->createJobOrder($productionBranch, $this->createCustomer($productionBranch), 'JO-OWN-001');
+        $dropoffOrders = collect(['JO-DROP-001', 'JO-DROP-002'])->map(function (string $number) use ($dropoffBranch, $productionBranch) {
+            $order = $this->createJobOrder($dropoffBranch, $this->createCustomer($dropoffBranch), $number);
+            $order->update(['processing_branch_id' => $productionBranch->id, 'production_accepted_at' => now()]);
+
+            return $order;
+        });
+
+        $cycles = [
+            [$ownOrder, 'wash', 1],
+            [$dropoffOrders[0], 'wash', 1],
+            [$dropoffOrders[0], 'dry', 2],
+            [$dropoffOrders[1], 'wash', 2],
+        ];
+
+        foreach ($cycles as [$order, $type, $machine]) {
+            CycleRecord::query()->create([
+                'job_order_id' => $order->id,
+                'user_id' => $user->id,
+                'cycle_type' => $type,
+                'machine_number' => $machine,
+                'cycle_number' => 1,
+                'started_at' => now()->subHour(),
+                'ended_at' => now(),
+            ]);
+        }
+
+        $this->actingAs($user)
+            ->get(route('admin.cycles.index'))
+            ->assertOk()
+            ->assertSee('Machine cycle count')
+            ->assertSee('All recorded cycles (no Z Reading yet)')
+            ->assertSeeInOrder([
+                'Main Production (own orders)', '>1</td>', '>0</td>',
+                'Counter Three', '(no machine)', '>2</td>', '>1</td>',
+                'Total machine cycles', '>3</td>', '>1</td>',
+            ], false);
+    }
+
     public function test_cycle_monitoring_keeps_large_lists_and_history_bounded(): void
     {
         $this->completeSystemSettings();
@@ -1561,7 +1623,7 @@ class CycleMonitoringTest extends TestCase
         ]);
     }
 
-    public function test_release_branch_payment_keeps_sales_owner_and_tracks_actual_collection_branch(): void
+    public function test_only_dropoff_branch_can_collect_payment_and_it_counts_in_its_own_z_reading(): void
     {
         $this->completeSystemSettings();
         $this->activeTrial();
@@ -1602,12 +1664,27 @@ class CycleMonitoringTest extends TestCase
                 'amount' => 500,
                 'remarks' => 'Paid at production release',
             ])
+            ->assertForbidden();
+
+        $this->assertDatabaseCount('payments', 0);
+
+        $dropoffCashier = User::factory()->create([
+            'role' => 'cashier',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['receivables', 'z_readings'],
+        ]);
+
+        $this->actingAs($dropoffCashier)
+            ->post(route('admin.receivables.payments.store', $order), [
+                'payment_type' => 'cash',
+                'amount' => 500,
+            ])
             ->assertRedirect();
 
         $payment = Payment::query()->where('job_order_id', $order->id)->firstOrFail();
         $this->assertSame($dropoffBranch->id, $payment->branch_id);
-        $this->assertSame($productionBranch->id, $payment->collected_branch_id);
-        $this->assertSame('pending', $payment->settlement_status);
+        $this->assertSame($dropoffBranch->id, $payment->collected_branch_id);
+        $this->assertSame('local', $payment->settlement_status);
 
         $this->assertDatabaseHas('job_orders', [
             'id' => $order->id,
@@ -1615,9 +1692,9 @@ class CycleMonitoringTest extends TestCase
             'balance' => 0,
         ]);
 
-        $this->actingAs($productionCashier)
+        $this->actingAs($dropoffCashier)
             ->get(route('admin.z-readings.create', [
-                'branch_id' => $productionBranch->id,
+                'branch_id' => $dropoffBranch->id,
                 'business_date' => today()->toDateString(),
             ]))
             ->assertOk()
