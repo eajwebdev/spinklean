@@ -6,10 +6,12 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\BranchSetting;
 use App\Models\Customer;
+use App\Models\PoDeliveryItem;
 use App\Models\PoTransaction;
 use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Support\Activity;
+use App\Support\PoDeliveries;
 use App\Support\StatementOfAccountRows;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -36,7 +38,7 @@ class PoTransactionController extends Controller
         $customers = $this->poCustomers($branchId, $canChooseBranch ? null : (int) $user->branch_id);
 
         $baseQuery = PoTransaction::query()
-            ->with(['branch', 'customer', 'jobOrder', 'payments.receiver'])
+            ->with(['branch', 'customer', 'jobOrder.items', 'deliveryItems', 'payments.receiver'])
             ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
             ->when($dateFrom, fn ($query) => $query->whereDate('transaction_date', '>=', $dateFrom))
             ->when($dateTo, fn ($query) => $query->whereDate('transaction_date', '<=', $dateTo))
@@ -92,13 +94,12 @@ class PoTransactionController extends Controller
         // The statement is issued by the branch the customer belongs to.
         $data['customer']->loadMissing('branch.setting');
         $issuingBranch = $data['customer']->branch;
-        $data['transactions']->load('jobOrder.items:id,job_order_id,description,service_category,quantity,unit_price,total');
 
         return Pdf::loadView('admin.po-transactions.statement-of-account-pdf', [
             ...$data,
             'issuingBranch' => $issuingBranch,
             'statementDetails' => BranchSetting::statementDetailsFor($issuingBranch?->setting),
-            'soa' => StatementOfAccountRows::build($data['transactions'], $data['dateFrom'], $data['dateTo']),
+            'soa' => StatementOfAccountRows::build($data['lines'], $data['dateFrom'], $data['dateTo']),
             'generatedAt' => now(),
         ])->setPaper('a4', 'portrait')->stream($filename);
     }
@@ -136,56 +137,123 @@ class PoTransactionController extends Controller
                 ]);
             }
 
-            $paidAmount = round((float) $po->paid_amount + $paymentAmount, 2);
-            $balance = max(round((float) $po->amount - $paidAmount, 2), 0);
-            $status = $validated['status'];
-
-            if ($balance <= 0) {
-                $status = 'paid';
-            } elseif ($paidAmount > 0) {
-                $status = 'partially_paid';
-            }
-
-            $po->update([
-                'paid_amount' => $paidAmount,
-                'balance' => $balance,
-                'status' => $status,
-                'billed_at' => in_array($status, ['billed', 'partially_paid', 'paid'], true) ? ($po->billed_at ?: now()) : null,
-                'paid_at' => $status === 'paid' ? ($po->paid_at ?: now()) : null,
-            ]);
-
-            if ($paymentAmount > 0) {
-                $payment = PoTransactionPayment::query()->create([
-                    'po_transaction_id' => $po->id,
-                    'branch_id' => $po->branch_id,
-                    'customer_id' => $po->customer_id,
-                    'job_order_id' => $po->job_order_id,
-                    'received_by' => $request->user()?->id,
-                    'payment_number' => $this->nextPaymentNumber(),
-                    'payment_method' => $validated['payment_method'],
-                    'reference_no' => $validated['reference_no'] ?? null,
-                    'amount' => $paymentAmount,
-                    'remarks' => $validated['remarks'] ?? null,
-                    'paid_at' => now(),
-                ]);
-
-                Activity::log($request, 'po_transaction_payment_recorded', $payment, [
-                    'payment_number' => $payment->payment_number,
-                    'po_number' => $po->po_number,
-                    'amount' => $payment->amount,
-                    'remaining_balance' => $po->balance,
-                ], $po->branch_id);
-            }
-
-            Activity::log($request, 'po_transaction_updated', $po, [
-                'po_number' => $po->po_number,
-                'status' => $po->status,
-                'paid_amount' => $po->paid_amount,
-                'balance' => $po->balance,
-            ], $po->branch_id);
+            $this->applyPayment($request, $po, $paymentAmount, $validated['status'], $validated['payment_method'] ?? null, $validated['reference_no'] ?? null, $validated['remarks'] ?? null);
         });
 
         return back()->with('success', 'PO transaction updated successfully.');
+    }
+
+    /**
+     * One payment for a whole statement (e.g. the customer's monthly cheque). It is applied to the
+     * delivered, unpaid POs oldest delivery first, and cannot pay for pieces not yet delivered.
+     */
+    public function payStatement(Request $request)
+    {
+        $validated = $request->validate([
+            'customer_id' => ['required', 'integer'],
+            'date_to' => ['required', 'date'],
+            'amount' => ['required', 'numeric', 'min:0.01'],
+            'payment_method' => ['required', Rule::in(['cash', 'gcash', 'bank', 'cheque'])],
+            'reference_no' => ['nullable', 'string', 'max:255'],
+            'paid_on' => ['nullable', 'date'],
+            'remarks' => ['nullable', 'string', 'max:500'],
+        ]);
+
+        $user = $request->user();
+        $customer = Customer::query()
+            ->when(! $user->isAdmin(), fn ($query) => $query->where('branch_id', $user->branch_id))
+            ->findOrFail($validated['customer_id']);
+        $dateTo = Carbon::parse($validated['date_to'])->toDateString();
+        $paidAt = filled($validated['paid_on'] ?? null) ? Carbon::parse($validated['paid_on'])->setTimeFrom(now()) : now();
+        $amount = round((float) $validated['amount'], 2);
+
+        $applied = DB::transaction(function () use ($request, $user, $customer, $dateTo, $paidAt, $amount, $validated) {
+            $purchaseOrders = PoTransaction::query()
+                ->with('deliveryItems.delivery')
+                ->where('customer_id', $customer->id)
+                ->when(! $user->isAdmin(), fn ($query) => $query->where('branch_id', $user->branch_id))
+                ->whereHas('deliveryItems')
+                ->lockForUpdate()
+                ->get()
+                ->filter(fn (PoTransaction $po) => PoDeliveries::dueAmount($po, $dateTo) > 0)
+                ->sortBy(fn (PoTransaction $po) => $po->deliveryItems->min(fn ($item) => $item->delivery?->delivered_on?->toDateString()).'-'.str_pad((string) $po->id, 10, '0', STR_PAD_LEFT));
+
+            $totalDue = round((float) $purchaseOrders->sum(fn (PoTransaction $po) => PoDeliveries::dueAmount($po, $dateTo)), 2);
+
+            if ($amount > $totalDue) {
+                throw ValidationException::withMessages([
+                    'amount' => 'Only ₱'.number_format($totalDue, 2).' is due for delivered laundry up to '.Carbon::parse($dateTo)->format('M d, Y').'.',
+                ]);
+            }
+
+            $left = $amount;
+            $applied = [];
+
+            foreach ($purchaseOrders as $po) {
+                if ($left <= 0) {
+                    break;
+                }
+
+                $portion = min($left, PoDeliveries::dueAmount($po, $dateTo));
+                $this->applyPayment($request, $po, $portion, 'billed', $validated['payment_method'], $validated['reference_no'] ?? null, $validated['remarks'] ?? 'Statement payment', $paidAt);
+                $left = round($left - $portion, 2);
+                $applied[] = $po->po_number;
+            }
+
+            return $applied;
+        });
+
+        return back()->with('success', 'Payment of ₱'.number_format($amount, 2).' applied to '.count($applied).' PO(s): '.implode(', ', $applied).'.');
+    }
+
+    private function applyPayment(Request $request, PoTransaction $po, float $paymentAmount, string $status, ?string $method, ?string $referenceNo, ?string $remarks, ?Carbon $paidAt = null): void
+    {
+        $paidAmount = round((float) $po->paid_amount + $paymentAmount, 2);
+        $balance = max(round((float) $po->amount - $paidAmount, 2), 0);
+
+        if ($balance <= 0) {
+            $status = 'paid';
+        } elseif ($paidAmount > 0) {
+            $status = 'partially_paid';
+        }
+
+        $po->update([
+            'paid_amount' => $paidAmount,
+            'balance' => $balance,
+            'status' => $status,
+            'billed_at' => in_array($status, ['billed', 'partially_paid', 'paid'], true) ? ($po->billed_at ?: now()) : null,
+            'paid_at' => $status === 'paid' ? ($po->paid_at ?: now()) : null,
+        ]);
+
+        if ($paymentAmount > 0) {
+            $payment = PoTransactionPayment::query()->create([
+                'po_transaction_id' => $po->id,
+                'branch_id' => $po->branch_id,
+                'customer_id' => $po->customer_id,
+                'job_order_id' => $po->job_order_id,
+                'received_by' => $request->user()?->id,
+                'payment_number' => $this->nextPaymentNumber(),
+                'payment_method' => $method,
+                'reference_no' => $referenceNo,
+                'amount' => $paymentAmount,
+                'remarks' => $remarks,
+                'paid_at' => $paidAt ?? now(),
+            ]);
+
+            Activity::log($request, 'po_transaction_payment_recorded', $payment, [
+                'payment_number' => $payment->payment_number,
+                'po_number' => $po->po_number,
+                'amount' => $payment->amount,
+                'remaining_balance' => $po->balance,
+            ], $po->branch_id);
+        }
+
+        Activity::log($request, 'po_transaction_updated', $po, [
+            'po_number' => $po->po_number,
+            'status' => $po->status,
+            'paid_amount' => $po->paid_amount,
+            'balance' => $po->balance,
+        ], $po->branch_id);
     }
 
     /**
@@ -253,41 +321,76 @@ class PoTransactionController extends Controller
                 ->when(! $canChooseBranch, fn ($query) => $query->where('branch_id', $user->branch_id))
                 ->find($customerId)
             : null;
-        $transactions = collect();
+        $selectedStatus = in_array($request->status, PoTransaction::STATUSES, true) ? $request->status : null;
+        $poFilter = fn ($query) => $query
+            ->where('customer_id', $customer?->id)
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->when($selectedStatus, fn ($query) => $query->where('status', $selectedStatus));
+        $lines = collect();
+        $accounts = collect();
+        $notYetDelivered = 0.0;
 
         if ($customer) {
-            $transactions = PoTransaction::query()
+            // Laundry is billed on the day it was delivered (the DR date), not the day it was dropped off.
+            $lines = PoDeliveryItem::query()
+                ->with(['delivery', 'poTransaction.jobOrder:id,job_order_number,status'])
+                ->whereHas('poTransaction', $poFilter)
+                ->whereHas('delivery', fn ($query) => $query->whereDate('delivered_on', '>=', $dateFrom)->whereDate('delivered_on', '<=', $dateTo))
+                ->get()
+                ->sortBy(fn (PoDeliveryItem $line) => $line->delivery->delivered_on->toDateString().'-'.str_pad((string) $line->po_delivery_id, 10, '0', STR_PAD_LEFT))
+                ->values();
+
+            $purchaseOrders = PoTransaction::query()
                 ->with([
                     'branch:id,name,code',
                     'jobOrder:id,job_order_number,status',
+                    'jobOrder.items',
+                    'deliveryItems.delivery',
                     'payments' => fn ($query) => $query->with('receiver:id,name')->orderBy('paid_at')->orderBy('id'),
                 ])
-                ->where('customer_id', $customer->id)
-                ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
-                ->whereDate('transaction_date', '>=', $dateFrom)
-                ->whereDate('transaction_date', '<=', $dateTo)
-                ->when(in_array($request->status, PoTransaction::STATUSES, true), fn ($query) => $query->where('status', $request->status))
+                ->where($poFilter)
                 ->orderBy('transaction_date')
                 ->orderBy('id')
                 ->get();
+
+            // Each PO billed in this period, plus older deliveries that are still unpaid.
+            $accounts = $purchaseOrders->map(fn (PoTransaction $po) => [
+                'po' => $po,
+                'in_period' => round((float) $lines->where('po_transaction_id', $po->id)->sum('amount'), 2),
+                'delivered' => PoDeliveries::deliveredAmount($po, $dateTo),
+                'due' => PoDeliveries::dueAmount($po, $dateTo),
+            ])->filter(fn (array $account) => $account['in_period'] > 0 || $account['due'] > 0)->values();
+
+            $notYetDelivered = round((float) $purchaseOrders->sum(fn (PoTransaction $po) => max((float) $po->amount - PoDeliveries::deliveredAmount($po), 0)), 2);
         }
+
+        $deliveries = $lines->groupBy('po_delivery_id')->map(fn ($group) => [
+            'delivery' => $group->first()->delivery,
+            'job_orders' => $group->map(fn ($line) => $line->poTransaction?->jobOrder?->job_order_number)->filter()->unique()->values(),
+            'po_numbers' => $group->map(fn ($line) => $line->poTransaction?->po_number)->filter()->unique()->values(),
+            'pieces' => (float) $group->reject(fn ($line) => StatementOfAccountRows::isDeliveryCharge($line))->sum('quantity'),
+            'amount' => round((float) $group->sum('amount'), 2),
+        ])->values();
 
         return [
             'settings' => SystemSetting::current(),
             'branches' => $branches,
             'customers' => $customers,
             'customer' => $customer,
-            'transactions' => $transactions,
-            'payments' => $transactions->flatMap->payments->sortBy('paid_at')->values(),
+            'lines' => $lines,
+            'deliveries' => $deliveries,
+            'accounts' => $accounts,
+            'payments' => $accounts->flatMap(fn (array $account) => $account['po']->payments)->sortBy('paid_at')->values(),
             'summary' => [
-                'transactions' => $transactions->count(),
-                'amount' => round((float) $transactions->sum('amount'), 2),
-                'paid' => round((float) $transactions->sum('paid_amount'), 2),
-                'balance' => round((float) $transactions->sum('balance'), 2),
+                'deliveries' => $deliveries->count(),
+                'amount' => round((float) $lines->sum('amount'), 2),
+                'paid' => round((float) $accounts->sum(fn (array $account) => (float) $account['po']->paid_amount), 2),
+                'balance' => round((float) $accounts->sum('due'), 2),
+                'not_yet_delivered' => $notYetDelivered,
             ],
             'statuses' => PoTransaction::STATUSES,
             'selectedBranchId' => $branchId,
-            'selectedStatus' => in_array($request->status, PoTransaction::STATUSES, true) ? $request->status : null,
+            'selectedStatus' => $selectedStatus,
             'dateFrom' => $dateFrom,
             'dateTo' => $dateTo,
             'canChooseBranch' => $canChooseBranch,

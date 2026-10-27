@@ -11,6 +11,7 @@ use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Support\FinancialReconciliation;
+use App\Support\PoDeliveries;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
@@ -347,6 +348,7 @@ class PoTransactionTest extends TestCase
             'is_active' => true,
         ]);
         $activeOrder = $this->poOrder($branch, $customer, $user, 'JO-SOA-ACTIVE', 500);
+        $activeOrder->items()->create(['description' => 'Bed sheet', 'quantity' => 50, 'unit_price' => 10, 'total' => 500]);
         $activePo = PoTransaction::query()->create([
             'branch_id' => $branch->id,
             'customer_id' => $customer->id,
@@ -371,6 +373,10 @@ class PoTransactionTest extends TestCase
             'amount' => 200,
             'paid_at' => now(),
         ]);
+        // Statements bill what was delivered: the active order went out today on one DR.
+        PoDeliveries::record($branch->id, $customer->id, [
+            $activePo->id => PoDeliveries::remainingLines($activePo)->mapWithKeys(fn (array $line) => [$line['key'] => $line['remaining']])->all(),
+        ], today()->toDateString());
 
         $cancelledOrder = $this->poOrder($branch, $customer, $user, 'JO-SOA-CANCELLED', 900);
         $cancelledOrder->update(['status' => 'cancelled', 'balance' => 0]);

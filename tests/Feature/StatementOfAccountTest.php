@@ -6,9 +6,11 @@ use App\Models\Branch;
 use App\Models\BranchSetting;
 use App\Models\Customer;
 use App\Models\JobOrder;
+use App\Models\PoDeliveryItem;
 use App\Models\PoTransaction;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Support\PoDeliveries;
 use App\Support\StatementOfAccountRows;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Barryvdh\DomPDF\PDF as DomPdf;
@@ -203,7 +205,7 @@ class StatementOfAccountTest extends TestCase
             ]);
         }
 
-        return PoTransaction::query()->create([
+        $po = PoTransaction::query()->create([
             'branch_id' => $customer->branch_id,
             'customer_id' => $customer->id,
             'job_order_id' => $order->id,
@@ -214,18 +216,23 @@ class StatementOfAccountTest extends TestCase
             'balance' => $total,
             'status' => 'pending',
         ]);
+
+        // Delivered in full on the same day, on its own DR.
+        PoDeliveries::record($customer->branch_id, $customer->id, [
+            $po->id => PoDeliveries::remainingLines($po)->mapWithKeys(fn (array $line) => [$line['key'] => $line['remaining']])->all(),
+        ], $date);
+
+        return $po->fresh();
     }
 
     private function rows(Customer $customer, string $from, string $to): array
     {
-        $transactions = PoTransaction::query()
-            ->with('jobOrder.items')
-            ->where('customer_id', $customer->id)
-            ->whereDate('transaction_date', '>=', $from)
-            ->whereDate('transaction_date', '<=', $to)
+        $lines = PoDeliveryItem::query()
+            ->with('delivery')
+            ->whereHas('delivery', fn ($query) => $query->where('customer_id', $customer->id)->whereDate('delivered_on', '>=', $from)->whereDate('delivered_on', '<=', $to))
             ->get();
 
-        return StatementOfAccountRows::build($transactions, $from, $to);
+        return StatementOfAccountRows::build($lines, $from, $to);
     }
 
     private function renderPdf(Customer $customer, string $from, string $to): string

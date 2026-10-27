@@ -55,6 +55,11 @@ class PoTransaction extends Model
         return $this->hasMany(PoTransactionPayment::class);
     }
 
+    public function deliveryItems()
+    {
+        return $this->hasMany(PoDeliveryItem::class);
+    }
+
     protected static function booted(): void
     {
         static::addGlobalScope('financially_active', function ($query): void {

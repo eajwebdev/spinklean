@@ -8,7 +8,6 @@
     x-data="{
         editOpen: null,
         historyOpen: null,
-        deliveryOpen: null,
         dateRange: @js($dateRangeValue),
         init() {
             this.$nextTick(() => {
@@ -33,10 +32,16 @@
             <h1 class="text-xl font-semibold">PO Transactions</h1>
             <p class="text-sm text-muted">Track purchase order billing separately from cashier unpaid orders.</p>
         </div>
-        <a href="{{ route('admin.po-transactions.statement-of-account', request()->except('page', 'search')) }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
-            <span data-lucide="file-text" class="h-4 w-4"></span>
-            Statement of Account
-        </a>
+        <div class="flex flex-wrap gap-2">
+            <a href="{{ route('admin.po-deliveries.index', array_filter(['customer_id' => request('customer_id')])) }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900">
+                <span data-lucide="truck" class="h-4 w-4"></span>
+                Delivery Receipts
+            </a>
+            <a href="{{ route('admin.po-transactions.statement-of-account', request()->except('page', 'search')) }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
+                <span data-lucide="file-text" class="h-4 w-4"></span>
+                Statement of Account
+            </a>
+        </div>
     </div>
 
     <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -150,6 +155,10 @@
                                 @else
                                     <span class="font-normal text-muted">&mdash;</span>
                                 @endif
+                                @if($transaction->deliveryItems->isNotEmpty())
+                                    @php($fullyDelivered = \App\Support\PoDeliveries::isFullyDelivered($transaction))
+                                    <span class="mt-0.5 block text-[11px] font-semibold {{ $fullyDelivered ? 'text-green-700 dark:text-green-300' : 'text-amber-700 dark:text-amber-300' }}">{{ $fullyDelivered ? 'Delivered' : 'Partial delivery' }}</span>
+                                @endif
                             </td>
                             <td class="px-4 py-3 text-right">
                                 <p class="font-semibold">{{ $appSettings?->currency ?? 'PHP' }} {{ number_format((float) $transaction->amount, 2) }}</p>
@@ -175,9 +184,9 @@
                                 <button type="button" @click="historyOpen = {{ $transaction->id }}" title="Payment history" aria-label="View PO payment history" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                     <span data-lucide="payments" class="h-4 w-4"></span>
                                 </button>
-                                <button type="button" @click="deliveryOpen = {{ $transaction->id }}" title="Edit date delivered & DR #" aria-label="Edit date delivered and DR number" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                                <a href="{{ route('admin.po-deliveries.create', ['customer_id' => $transaction->customer_id, 'po_transaction_id' => $transaction->id]) }}" title="New delivery receipt" aria-label="New delivery receipt" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                     <span data-lucide="truck" class="h-4 w-4"></span>
-                                </button>
+                                </a>
                                 <button type="button" @click="editOpen = {{ $transaction->id }}" title="Update PO" aria-label="Update PO transaction" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                     <span data-lucide="settings" class="h-4 w-4"></span>
                                 </button>
@@ -244,39 +253,6 @@
                         </tbody>
                     </table>
                 </div>
-            </div>
-        </div>
-
-        <div x-cloak x-show="deliveryOpen === {{ $transaction->id }}" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <div @click.outside="deliveryOpen = null" class="w-full max-w-sm rounded-lg bg-white p-5 shadow-2xl dark:bg-gray-900">
-                <div class="mb-4 flex items-center justify-between">
-                    <div>
-                        <h2 class="inline-flex items-center gap-2 text-lg font-semibold"><span data-lucide="truck" class="h-4 w-4 text-primary"></span>Delivery Details</h2>
-                        <p class="text-sm text-muted">{{ $transaction->po_number }} - {{ $transaction->jobOrder?->job_order_number }}</p>
-                    </div>
-                    <button type="button" @click="deliveryOpen = null" class="rounded-md p-2 hover:bg-smoke dark:hover:bg-gray-800"><span data-lucide="x" class="h-4 w-4"></span></button>
-                </div>
-
-                <form method="POST" action="{{ route('admin.po-transactions.delivery', $transaction) }}" class="space-y-4">
-                    @csrf
-                    @method('PATCH')
-                    <div>
-                        <label for="date-delivered-{{ $transaction->id }}" class="mb-1.5 block text-sm font-medium">Date Delivered</label>
-                        <input id="date-delivered-{{ $transaction->id }}" type="date" name="date_delivered" value="{{ $transaction->date_delivered?->toDateString() }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
-                    </div>
-                    <div>
-                        <label for="dr-number-{{ $transaction->id }}" class="mb-1.5 block text-sm font-medium">DR #</label>
-                        <input id="dr-number-{{ $transaction->id }}" name="dr_number" maxlength="100" value="{{ $transaction->dr_number }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950" placeholder="Delivery receipt number">
-                    </div>
-                    <p class="text-xs text-muted">Only these two fields are changed. Amount, payments and status stay the same. Leave a field blank to clear it.</p>
-                    <div class="flex justify-end gap-2">
-                        <button type="button" @click="deliveryOpen = null" class="h-9 rounded-md border border-border px-4 text-sm font-medium hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">Cancel</button>
-                        <button type="submit" class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">
-                            <span data-lucide="save" class="h-4 w-4"></span>
-                            Save
-                        </button>
-                    </div>
-                </form>
             </div>
         </div>
 

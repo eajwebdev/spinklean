@@ -2,12 +2,23 @@
 
 namespace App\Models;
 
+use App\Support\PoDeliveries;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class JobOrder extends Model
 {
     use SoftDeletes;
+
+    protected static function booted(): void
+    {
+        // However a PO order gets completed, whatever was not yet delivered goes on a final DR.
+        static::updated(function (JobOrder $order): void {
+            if ($order->wasChanged('status') && $order->status === 'completed') {
+                PoDeliveries::deliverRemaining($order);
+            }
+        });
+    }
 
     protected $fillable = ['branch_id', 'processing_branch_id', 'current_branch_id', 'release_branch_id', 'customer_id', 'created_by', 'job_order_number', 'tag_number', 'status', 'transaction_type', 'is_rush', 'subtotal', 'discount', 'tax', 'total', 'paid_amount', 'balance', 'notes', 'completed_at', 'production_completed_at', 'production_accepted_at', 'inventory_deducted_at', 'returned_to_branch_at', 'returned_received_at', 'released_at'];
 

@@ -19,6 +19,7 @@ use App\Models\ServicePreset;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Support\Activity;
+use App\Support\PoDeliveries;
 use App\Support\SmsNotifier;
 use App\Support\TagValidator;
 use Illuminate\Http\Request;
@@ -529,6 +530,7 @@ class JobOrderController extends Controller
         }
 
         $validated['items'] = $this->expandPresetCartItems($validated['items'], (int) $jobOrder->branch_id);
+        PoDeliveries::assertItemsCoverDeliveries($jobOrder, $validated['items']);
 
         $serviceIds = collect($validated['items'])->pluck('laundry_service_id')->unique()->values();
         $selectedServices = LaundryService::query()
@@ -729,6 +731,7 @@ class JobOrderController extends Controller
         $this->authorizeJobOrder($request, $jobOrder);
 
         abort_if(in_array($jobOrder->status, ['completed', 'cancelled'], true), 422, 'Completed or cancelled job orders cannot be cancelled.');
+        abort_if(PoDeliveries::hasDeliveries($jobOrder), 422, 'Part of this PO job order was already delivered. Void its Delivery Receipts first.');
 
         DB::transaction(function () use ($request, $jobOrder): void {
             $paymentIds = Payment::withoutGlobalScope('financially_active')

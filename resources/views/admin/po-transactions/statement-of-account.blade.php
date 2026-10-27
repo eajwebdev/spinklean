@@ -15,7 +15,7 @@
                 Corporate billing report
             </div>
             <h1 class="text-xl font-semibold">PO Statement of Account</h1>
-            <p class="text-sm text-muted">Generate a customer statement from active PO transactions. Canceled job orders are excluded.</p>
+            <p class="text-sm text-muted">Bills laundry on the day it was delivered (Delivery Receipt date). Canceled job orders are excluded.</p>
         </div>
         <div class="flex flex-wrap gap-2">
             <a href="{{ route('admin.po-transactions.index') }}" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border bg-white px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:bg-gray-950 dark:hover:bg-gray-900">
@@ -160,22 +160,26 @@
             <p class="mt-1 text-xs text-muted">The report will use the selected period, branch, and PO status.</p>
         </div>
     @else
-        <div class="grid gap-3 md:grid-cols-4">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-                <p class="text-xs text-muted">PO Transactions</p>
-                <p class="mt-1 text-lg font-semibold">{{ number_format($summary['transactions']) }}</p>
-            </div>
-            <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-                <p class="text-xs text-muted">Total Charges</p>
+                <p class="text-xs text-muted">Delivered this period</p>
                 <p class="mt-1 text-lg font-semibold">{{ $currency }} {{ number_format((float) $summary['amount'], 2) }}</p>
+                <p class="text-xs text-muted">{{ number_format($summary['deliveries']) }} delivery receipt(s)</p>
             </div>
             <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                 <p class="text-xs text-muted">Total Paid</p>
                 <p class="mt-1 text-lg font-semibold text-green-600 dark:text-green-400">{{ $currency }} {{ number_format((float) $summary['paid'], 2) }}</p>
+                <p class="text-xs text-muted">On the job orders below</p>
             </div>
             <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                 <p class="text-xs text-muted">Amount Due</p>
                 <p class="mt-1 text-lg font-semibold {{ $summary['balance'] > 0 ? 'text-red-600 dark:text-red-400' : '' }}">{{ $currency }} {{ number_format((float) $summary['balance'], 2) }}</p>
+                <p class="text-xs text-muted">Delivered up to {{ \Illuminate\Support\Carbon::parse($dateTo)->format('M d, Y') }}, not yet paid</p>
+            </div>
+            <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                <p class="text-xs text-muted">Not yet delivered</p>
+                <p class="mt-1 text-lg font-semibold text-amber-600 dark:text-amber-400">{{ $currency }} {{ number_format((float) $summary['not_yet_delivered'], 2) }}</p>
+                <p class="text-xs text-muted">Billed once it goes out on a DR</p>
             </div>
         </div>
 
@@ -190,59 +194,142 @@
                     <div class="text-sm sm:text-right">
                         <p class="font-medium">Statement Period</p>
                         <p class="text-muted">{{ \Illuminate\Support\Carbon::parse($dateFrom)->format('M d, Y') }} to {{ \Illuminate\Support\Carbon::parse($dateTo)->format('M d, Y') }}</p>
+                        <a href="{{ route('admin.po-deliveries.create', ['customer_id' => $customer->id]) }}" class="mt-2 inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-semibold hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                            <span data-lucide="truck" class="h-3.5 w-3.5"></span>
+                            New Delivery Receipt
+                        </a>
                     </div>
                 </div>
             </div>
 
+            <div class="border-b border-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted dark:border-gray-800">Deliveries in this period</div>
             <div class="overflow-x-auto">
                 <table class="w-full text-left text-sm">
                     <thead class="border-b border-border bg-smoke text-xs uppercase text-muted dark:border-gray-800 dark:bg-gray-950">
                         <tr>
-                            <th class="px-4 py-3">Date</th>
+                            <th class="px-4 py-3">Date Delivered</th>
+                            <th class="px-4 py-3">DR #</th>
+                            <th class="px-4 py-3">Job Orders</th>
                             <th class="px-4 py-3">PO Number</th>
-                            <th class="px-4 py-3">Job Order</th>
-                            <th class="px-4 py-3">Branch</th>
-                            <th class="px-4 py-3">Status</th>
+                            <th class="px-4 py-3 text-right">Pieces</th>
                             <th class="px-4 py-3 text-right">Amount</th>
-                            <th class="px-4 py-3 text-right">Paid</th>
-                            <th class="px-4 py-3 text-right">Balance</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-border dark:divide-gray-800">
-                        @forelse($transactions as $transaction)
+                        @forelse($deliveries as $row)
                             <tr>
-                                <td class="whitespace-nowrap px-4 py-3">{{ $transaction->transaction_date?->format('M d, Y') }}</td>
-                                <td class="px-4 py-3 font-medium">{{ $transaction->po_number }}</td>
-                                <td class="px-4 py-3">{{ $transaction->jobOrder?->job_order_number ?? 'N/A' }}</td>
-                                <td class="px-4 py-3">{{ $transaction->branch?->name ?? 'N/A' }}</td>
-                                <td class="px-4 py-3"><span class="{{ \App\Support\StatusBadge::classes($transaction->status) }}">{{ \App\Support\StatusBadge::label($transaction->status) }}</span></td>
-                                <td class="px-4 py-3 text-right">{{ number_format((float) $transaction->amount, 2) }}</td>
-                                <td class="px-4 py-3 text-right text-green-700 dark:text-green-300">{{ number_format((float) $transaction->paid_amount, 2) }}</td>
-                                <td class="px-4 py-3 text-right font-medium {{ (float) $transaction->balance > 0 ? 'text-red-600 dark:text-red-400' : '' }}">{{ number_format((float) $transaction->balance, 2) }}</td>
+                                <td class="whitespace-nowrap px-4 py-3">{{ $row['delivery']->delivered_on->format('M d, Y') }}</td>
+                                <td class="px-4 py-3 font-medium">
+                                    <a href="{{ route('admin.po-deliveries.print', $row['delivery']) }}" target="_blank" class="text-primary hover:underline">{{ $row['delivery']->dr_number }}</a>
+                                </td>
+                                <td class="px-4 py-3">{{ $row['job_orders']->implode(', ') }}</td>
+                                <td class="px-4 py-3">{{ $row['po_numbers']->implode(', ') }}</td>
+                                <td class="px-4 py-3 text-right">{{ rtrim(rtrim(number_format($row['pieces'], 2), '0'), '.') }}</td>
+                                <td class="px-4 py-3 text-right font-medium">{{ number_format((float) $row['amount'], 2) }}</td>
                             </tr>
                         @empty
-                            <tr><td colspan="8" class="px-4 py-10 text-center text-muted">No active PO transactions found for this period.</td></tr>
+                            <tr><td colspan="6" class="px-4 py-10 text-center text-muted">Nothing was delivered to this customer in this period.</td></tr>
                         @endforelse
                     </tbody>
-                    @if($transactions->isNotEmpty())
+                    @if($deliveries->isNotEmpty())
                         <tfoot class="border-t border-border bg-smoke font-semibold dark:border-gray-800 dark:bg-gray-950">
                             <tr>
                                 <td colspan="5" class="px-4 py-3">Statement Total</td>
                                 <td class="px-4 py-3 text-right">{{ $currency }} {{ number_format((float) $summary['amount'], 2) }}</td>
-                                <td class="px-4 py-3 text-right">{{ number_format((float) $summary['paid'], 2) }}</td>
-                                <td class="px-4 py-3 text-right">{{ number_format((float) $summary['balance'], 2) }}</td>
                             </tr>
                         </tfoot>
                     @endif
                 </table>
             </div>
+
+            @if($accounts->isNotEmpty())
+                <div class="border-y border-border px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted dark:border-gray-800">Job order balances</div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="border-b border-border bg-smoke text-xs uppercase text-muted dark:border-gray-800 dark:bg-gray-950">
+                            <tr>
+                                <th class="px-4 py-3">PO Number</th>
+                                <th class="px-4 py-3">Job Order</th>
+                                <th class="px-4 py-3">Status</th>
+                                <th class="px-4 py-3 text-right">Order Amount</th>
+                                <th class="px-4 py-3 text-right">Delivered</th>
+                                <th class="px-4 py-3 text-right">Paid</th>
+                                <th class="px-4 py-3 text-right">Due</th>
+                                <th class="px-4 py-3 text-right">Not Yet Delivered</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-border dark:divide-gray-800">
+                            @foreach($accounts as $account)
+                                @php($po = $account['po'])
+                                @php($undelivered = max((float) $po->amount - \App\Support\PoDeliveries::deliveredAmount($po), 0))
+                                <tr>
+                                    <td class="px-4 py-3 font-medium">{{ $po->po_number }}</td>
+                                    <td class="px-4 py-3">{{ $po->jobOrder?->job_order_number ?? 'N/A' }}</td>
+                                    <td class="px-4 py-3"><span class="{{ \App\Support\StatusBadge::classes($po->status) }}">{{ \App\Support\StatusBadge::label($po->status) }}</span></td>
+                                    <td class="px-4 py-3 text-right">{{ number_format((float) $po->amount, 2) }}</td>
+                                    <td class="px-4 py-3 text-right">{{ number_format((float) $account['delivered'], 2) }}</td>
+                                    <td class="px-4 py-3 text-right text-green-700 dark:text-green-300">{{ $currency }} {{ number_format((float) $po->paid_amount, 2) }}</td>
+                                    <td class="px-4 py-3 text-right font-semibold {{ $account['due'] > 0 ? 'text-red-600 dark:text-red-400' : '' }}">{{ $currency }} {{ number_format((float) $account['due'], 2) }}</td>
+                                    <td class="px-4 py-3 text-right {{ $undelivered > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-muted' }}">{{ number_format($undelivered, 2) }}</td>
+                                </tr>
+                            @endforeach
+                        </tbody>
+                    </table>
+                </div>
+            @endif
         </div>
+
+        @if($summary['balance'] > 0)
+            <form method="POST" action="{{ route('admin.po-transactions.statement-of-account.payments') }}" class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                @csrf
+                <input type="hidden" name="customer_id" value="{{ $customer->id }}">
+                <input type="hidden" name="date_to" value="{{ $dateTo }}">
+                <div class="mb-3">
+                    <h2 class="font-semibold">Record Monthly Payment</h2>
+                    <p class="text-sm text-muted">One payment for this statement, such as the customer's cheque. It is applied to the delivered job orders above, oldest delivery first. It can't pay for laundry not yet delivered.</p>
+                </div>
+                <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                    <label>
+                        <span class="mb-1 block text-sm font-medium">Amount</span>
+                        <input type="number" name="amount" step="0.01" min="0.01" max="{{ $summary['balance'] }}" value="{{ old('amount', number_format((float) $summary['balance'], 2, '.', '')) }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                        @error('amount')<span class="mt-1 block text-xs font-medium text-red-600">{{ $message }}</span>@enderror
+                    </label>
+                    <label>
+                        <span class="mb-1 block text-sm font-medium">Method</span>
+                        <select name="payment_method" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                            <option value="cheque">Cheque</option>
+                            <option value="bank">Bank Transfer</option>
+                            <option value="gcash">GCash</option>
+                            <option value="cash">Cash</option>
+                        </select>
+                    </label>
+                    <label>
+                        <span class="mb-1 block text-sm font-medium">Reference No.</span>
+                        <input name="reference_no" value="{{ old('reference_no') }}" placeholder="Cheque or bank reference" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </label>
+                    <label>
+                        <span class="mb-1 block text-sm font-medium">Date Paid</span>
+                        <input type="date" name="paid_on" value="{{ old('paid_on', today()->toDateString()) }}" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </label>
+                    <label>
+                        <span class="mb-1 block text-sm font-medium">Remarks</span>
+                        <input name="remarks" value="{{ old('remarks', 'SOA '.\Illuminate\Support\Carbon::parse($dateFrom)->format('M Y')) }}" maxlength="500" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </label>
+                </div>
+                <div class="mt-3 flex justify-end">
+                    <button type="submit" class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">
+                        <span data-lucide="save" class="h-4 w-4"></span>
+                        Record Payment
+                    </button>
+                </div>
+            </form>
+        @endif
 
         @if($payments->isNotEmpty())
             <div class="rounded-lg border border-border bg-white shadow-sm dark:border-gray-800 dark:bg-gray-900">
                 <div class="border-b border-border p-4 dark:border-gray-800">
                     <h2 class="font-semibold">Payment History</h2>
-                    <p class="text-sm text-muted">Payments recorded against the PO transactions shown above.</p>
+                    <p class="text-sm text-muted">Payments recorded against the job orders shown above.</p>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-sm">
@@ -251,7 +338,7 @@
                         </thead>
                         <tbody class="divide-y divide-border dark:divide-gray-800">
                             @foreach($payments as $payment)
-                                @php($paymentPo = $transactions->firstWhere('id', $payment->po_transaction_id))
+                                @php($paymentPo = $accounts->firstWhere('po.id', $payment->po_transaction_id)['po'] ?? null)
                                 <tr>
                                     <td class="whitespace-nowrap px-4 py-3">{{ $payment->paid_at?->format('M d, Y') }}</td>
                                     <td class="px-4 py-3 font-medium">{{ $payment->payment_number }}</td>

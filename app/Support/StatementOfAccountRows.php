@@ -3,7 +3,7 @@
 namespace App\Support;
 
 use App\Models\JobOrderItem;
-use App\Models\PoTransaction;
+use App\Models\PoDeliveryItem;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
@@ -11,15 +11,19 @@ use Illuminate\Support\Str;
 /**
  * Builds the day-by-day lines of a PO Statement of Account:
  * one row per calendar day with total loads, price per load, dry extension, delivery and amount.
+ * Laundry is billed on the day it was delivered, from the Delivery Receipt lines.
  */
 class StatementOfAccountRows
 {
     /**
-     * @param  Collection<int, PoTransaction>  $transactions  with jobOrder.items loaded
+     * @param  Collection<int, PoDeliveryItem>  $lines  DR lines with delivery loaded
      */
-    public static function build(Collection $transactions, string $dateFrom, string $dateTo): array
+    public static function build(Collection $lines, string $dateFrom, string $dateTo): array
     {
-        $byDate = $transactions->groupBy(fn (PoTransaction $po) => $po->transaction_date->toDateString());
+        // Lines of one job order delivered on one DR are broken down together, as one order was before.
+        $byDate = $lines
+            ->groupBy(fn (PoDeliveryItem $line) => $line->delivery->delivered_on->toDateString())
+            ->map(fn (Collection $dayLines) => $dayLines->groupBy(fn (PoDeliveryItem $line) => $line->po_delivery_id.'-'.$line->po_transaction_id)->values());
         $days = [];
 
         foreach (Carbon::parse($dateFrom)->daysUntil(Carbon::parse($dateTo)) as $day) {
@@ -31,15 +35,15 @@ class StatementOfAccountRows
             $delivery = 0.0;
             $amount = 0.0;
 
-            foreach ($byDate->get($date, collect()) as $po) {
-                $breakdown = self::orderBreakdown($po->jobOrder?->items ?? collect());
+            foreach ($byDate->get($date, collect()) as $orderLines) {
+                $breakdown = self::orderBreakdown($orderLines);
                 $loads += $breakdown['loads'];
                 $loadAmount += $breakdown['load_amount'];
                 $prices = array_merge($prices, $breakdown['prices']);
                 $dryExtension += $breakdown['dry_extension'];
                 $delivery += $breakdown['delivery'];
-                // The PO amount is what the customer owes (it already reflects any discount).
-                $amount += (float) $po->amount;
+                // The billed amount already reflects the order's discount and tax.
+                $amount += (float) $orderLines->sum('amount');
             }
 
             $days[] = [
@@ -69,6 +73,15 @@ class StatementOfAccountRows
     }
 
     /**
+     * A delivery fee line rather than laundry ("Delivery" category, or described as a delivery).
+     */
+    public static function isDeliveryCharge(JobOrderItem|PoDeliveryItem $item): bool
+    {
+        return Str::lower((string) $item->service_category) === 'delivery'
+            || Str::startsWith(Str::lower((string) $item->description), 'delivery');
+    }
+
+    /**
      * Split one job order's items into loads, dry extension and delivery.
      *
      * - "Delivery" category items are delivery charges.
@@ -92,7 +105,7 @@ class StatementOfAccountRows
             $category = Str::lower((string) $item->service_category);
             $description = Str::lower((string) $item->description);
 
-            if ($category === 'delivery' || Str::startsWith($description, 'delivery')) {
+            if (self::isDeliveryCharge($item)) {
                 $delivery += $lineTotal;
             } elseif (Str::contains($description, 'dry extension')) {
                 $dryExtension += $lineTotal;
