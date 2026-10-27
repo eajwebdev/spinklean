@@ -777,6 +777,49 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $this->assertSame('returning_to_branch', $order->fresh()->status);
     }
 
+    public function test_notes_entered_at_branch_3_pos_show_in_processing_branch_cycle_monitoring_through_every_stage(): void
+    {
+        $notes = 'Handle with care - delicate blouse, hang dry';
+
+        $this->actingAs($this->b3User)->post(route('admin.job-orders.store'), [
+            'branch_id' => $this->branch3->id,
+            'processing_branch_id' => $this->branch1->id,
+            'customer_id' => $this->b3Customer->id,
+            'items' => [[
+                'laundry_service_id' => $this->b3Service->id,
+                'description' => $this->b3Service->name,
+                'quantity' => 1,
+                'unit_price' => 150,
+            ]],
+            'paid_amount' => 0,
+            'transaction_type' => 'walk_in',
+            'notes' => $notes,
+        ])->assertRedirect();
+
+        $order = JobOrder::where('customer_id', $this->b3Customer->id)->firstOrFail();
+        $this->assertSame($notes, $order->notes);
+
+        // Branch 1 scans the tag in, which lands on Cycle Monitoring.
+        $this->actingAs($this->b1User)
+            ->followingRedirects()
+            ->get(route('admin.cycles.scan', $order))
+            ->assertOk()
+            ->assertSee($order->job_order_number)
+            ->assertSee($notes);
+
+        // Still visible while washing.
+        $this->actingAs($this->b1User)->post(route('admin.cycles.store', $order), [
+            'cycle_type' => 'wash',
+            'machine_numbers' => [1],
+        ])->assertRedirect();
+        $this->assertSame('washing', $order->fresh()->status);
+
+        $this->actingAs($this->b1User)
+            ->get(route('admin.cycles.index'))
+            ->assertOk()
+            ->assertSee($notes);
+    }
+
     public function test_branch_3_job_order_notes_are_visible_to_processing_branch(): void
     {
         $order = JobOrder::query()->create([
