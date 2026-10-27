@@ -1382,9 +1382,12 @@ class DropoffPickupBranchWorkflowTest extends TestCase
             'transferred_at' => now(),
         ]);
 
-        // Branch 1 sees 1 pending incoming transfer
+        // Branch 1 sees 1 pending incoming transfer, with the newest tag for the live TAG chime
         $countResponseBefore = $this->actingAs($this->b1User)->getJson(route('admin.transfers.count'));
         $this->assertSame(1, $countResponseBefore->json('count'));
+        $this->assertSame($transfer->id, $countResponseBefore->json('latest_id'));
+        $this->assertSame($order->tag_number, $countResponseBefore->json('latest_tag_number'));
+        $this->assertSame($this->branch3->name, $countResponseBefore->json('latest_origin_branch'));
 
         // Branch 3 cancels the order
         $cancelResponse = $this->actingAs($this->b3User)->patch(route('admin.job-orders.cancel', $order));
@@ -1399,6 +1402,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         // Branch 1 tag count decrements to 0
         $countResponseAfter = $this->actingAs($this->b1User)->getJson(route('admin.transfers.count'));
         $this->assertSame(0, $countResponseAfter->json('count'));
+        $this->assertNull($countResponseAfter->json('latest_id'));
     }
 
     /**

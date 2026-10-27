@@ -23,21 +23,7 @@
 
             @if($canReceiveTransfers)
                 <div
-                    x-data="{
-                        count: 0,
-                        async fetchCount() {
-                            try {
-                                const res = await fetch('{{ route('admin.transfers.count') }}', {
-                                    headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
-                                });
-                                if (res.ok) {
-                                    const data = await res.json();
-                                    this.count = data.pending_count ?? 0;
-                                }
-                            } catch (e) {}
-                        }
-                    }"
-                    x-init="fetchCount(); setInterval(() => fetchCount(), 30000)"
+                    x-data="incomingTagsWatcher(@js(route('admin.transfers.count')), @js('spinklean:last-incoming-tag:'.$user->id))"
                     @tags-updated.window="fetchCount()"
                     class="relative inline-flex items-center"
                 >
@@ -52,10 +38,120 @@
                         <span class="text-xs uppercase tracking-wide">TAG</span>
                         <span
                             class="js-tag-count flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[11px] font-bold leading-none text-white shadow-sm"
+                            :class="ringing ? 'animate-bounce' : ''"
                             x-text="count"
                         >0</span>
                     </button>
                 </div>
+
+                <script>
+                    function incomingTagsWatcher(countUrl, storageKey) {
+                        let audioContext = null;
+
+                        const readLastSeen = () => {
+                            try { return Number(localStorage.getItem(storageKey) || 0); } catch (e) { return null; }
+                        };
+                        const writeLastSeen = (id) => {
+                            try { localStorage.setItem(storageKey, String(id)); } catch (e) {}
+                        };
+
+                        return {
+                            count: 0,
+                            ringing: false,
+                            lastSeenId: null,
+                            init() {
+                                // Browsers only allow sound after the user has interacted with the page once.
+                                const unlock = () => {
+                                    try {
+                                        audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+                                        audioContext.resume();
+                                    } catch (e) {}
+                                };
+                                ['click', 'keydown', 'touchstart'].forEach(type => window.addEventListener(type, unlock, { once: true, passive: true }));
+
+                                this.lastSeenId = readLastSeen();
+                                this.fetchCount();
+                                setInterval(() => this.fetchCount(), 10000);
+                            },
+                            async fetchCount() {
+                                try {
+                                    const res = await fetch(countUrl, {
+                                        headers: { 'Accept': 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+                                        credentials: 'same-origin'
+                                    });
+                                    if (!res.ok) return;
+                                    const data = await res.json();
+                                    const previousCount = this.count;
+                                    this.count = data.pending_count ?? 0;
+
+                                    const latestId = Number(data.latest_id || 0);
+                                    // Another tab may have already announced this tag.
+                                    const storedId = readLastSeen();
+                                    const lastSeen = Math.max(Number(this.lastSeenId || 0), Number(storedId || 0));
+                                    const isNewTag = latestId > lastSeen && this.lastSeenId !== null;
+
+                                    if (latestId > lastSeen) {
+                                        this.lastSeenId = latestId;
+                                        writeLastSeen(latestId);
+                                    } else if (this.lastSeenId === null) {
+                                        this.lastSeenId = lastSeen;
+                                    }
+
+                                    if (isNewTag) {
+                                        this.announce(data);
+                                    }
+
+                                    if (isNewTag || previousCount !== this.count) {
+                                        window.dispatchEvent(new CustomEvent('incoming-tags-changed', { detail: { count: this.count, isNew: isNewTag } }));
+                                    }
+                                } catch (e) {}
+                            },
+                            announce(data) {
+                                this.playChime();
+                                this.ringing = true;
+                                setTimeout(() => this.ringing = false, 4000);
+
+                                const tag = data.latest_tag_number ? `Tag #${data.latest_tag_number}` : 'New laundry tag';
+                                const from = data.latest_origin_branch ? ` from ${data.latest_origin_branch}` : '';
+                                if (window.Swal) {
+                                    Swal.fire({
+                                        toast: true,
+                                        position: 'top-end',
+                                        icon: 'info',
+                                        title: 'New Job Order for Cycle Monitoring',
+                                        text: `${tag}${from} is waiting to be received.`,
+                                        showConfirmButton: true,
+                                        confirmButtonText: 'Receive Tags',
+                                        showCloseButton: true,
+                                        timer: 15000,
+                                        timerProgressBar: true,
+                                    }).then((r) => {
+                                        if (r.isConfirmed) window.dispatchEvent(new CustomEvent('open-incoming-tags-modal'));
+                                    });
+                                }
+                            },
+                            playChime() {
+                                try {
+                                    audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+                                    if (audioContext.state === 'suspended') audioContext.resume();
+                                    const start = audioContext.currentTime;
+                                    [[880, 0], [1320, 0.18], [880, 0.5], [1320, 0.68]].forEach(([frequency, offset]) => {
+                                        const oscillator = audioContext.createOscillator();
+                                        const gain = audioContext.createGain();
+                                        oscillator.type = 'sine';
+                                        oscillator.frequency.value = frequency;
+                                        gain.gain.setValueAtTime(0.0001, start + offset);
+                                        gain.gain.exponentialRampToValueAtTime(0.35, start + offset + 0.02);
+                                        gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.3);
+                                        oscillator.connect(gain).connect(audioContext.destination);
+                                        oscillator.start(start + offset);
+                                        oscillator.stop(start + offset + 0.32);
+                                    });
+                                } catch (e) {}
+                            },
+                        };
+                    }
+                </script>
             @endif
 
             @php($billingNotices = collect($billingNotifications ?? []))

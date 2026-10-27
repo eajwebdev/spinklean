@@ -1287,6 +1287,47 @@ class CycleMonitoringTest extends TestCase
         );
     }
 
+    public function test_received_sms_is_not_sent_when_send_sms_is_not_checked(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+        SystemSetting::current()->update(['sms_enabled' => true]);
+
+        $branch = $this->createBranch(['branch_type' => 'full_service', 'machine_count' => 2]);
+        $customer = $this->createCustomer($branch);
+        $service = \App\Models\LaundryService::query()->create([
+            'branch_id' => $branch->id,
+            'name' => 'Wash Dry Fold',
+            'pricing_type' => 'kilo',
+            'price' => 100,
+            'is_active' => true,
+        ]);
+        $manager = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $branch->id,
+            'access' => ['job_orders'],
+        ]);
+
+        // An unchecked checkbox is simply left out of the form submission.
+        $this->actingAs($manager)
+            ->post(route('admin.job-orders.store'), [
+                'branch_id' => $branch->id,
+                'processing_branch_id' => $branch->id,
+                'customer_id' => $customer->id,
+                'items' => [[
+                    'laundry_service_id' => $service->id,
+                    'description' => $service->name,
+                    'quantity' => 1,
+                    'unit_price' => 100,
+                ]],
+                'payment_type' => 'unpaid',
+            ])
+            ->assertRedirect(route('admin.job-orders.index'));
+
+        $this->assertDatabaseHas('job_orders', ['customer_id' => $customer->id]);
+        $this->assertDatabaseCount('sms_logs', 0);
+    }
+
     public function test_job_order_is_saved_when_unisms_rejects_sms(): void
     {
         Http::fake([

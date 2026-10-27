@@ -100,15 +100,21 @@ class JobOrderTransferController extends Controller
     {
         $branchId = $this->resolveBranchId($request);
 
-        $count = JobOrderTransfer::query()
+        $pending = JobOrderTransfer::query()
             ->where('destination_branch_id', $branchId)
             ->where('transfer_status', 'pending')
-            ->where('transfer_type', 'outbound')
-            ->count();
+            ->where('transfer_type', 'outbound');
+
+        $count = (clone $pending)->count();
+        // The newest pending transfer lets the TAG badge chime only when a new laundry tag arrives.
+        $latest = $count > 0 ? (clone $pending)->with('originBranch')->latest('id')->first() : null;
 
         return response()->json([
             'count' => $count,
             'pending_count' => $count,
+            'latest_id' => $latest?->id,
+            'latest_tag_number' => $latest?->tag_number,
+            'latest_origin_branch' => $latest?->originBranch?->name,
         ]);
     }
 

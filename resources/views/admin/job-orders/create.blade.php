@@ -89,15 +89,28 @@
                     @endphp
                     @if($userCanChoose || $isCurrentDropoff)
                         <div class="flex flex-col gap-1">
-                            <span class="text-[10px] font-medium text-muted">Receiving Production Branch</span>
+                            <span class="text-[10px] font-medium" :class="needsProcessingBranch ? 'text-red-600' : 'text-muted'">
+                                Receiving Production Branch<span x-show="isNoMachineBranch" class="text-red-600"> *</span>
+                            </span>
                             <div class="flex items-center gap-2">
-                                <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
-                                <select name="processing_branch_id" x-model="processingBranchId" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" :required="isNoMachineBranch">
+                                <span data-lucide="git-branch" class="h-3.5 w-3.5" :class="needsProcessingBranch ? 'text-red-600' : 'text-muted'"></span>
+                                <select
+                                    name="processing_branch_id"
+                                    x-ref="processingBranchSelect"
+                                    x-model="processingBranchId"
+                                    class="h-8 rounded-md px-2 text-xs font-medium"
+                                    :class="needsProcessingBranch ? 'border-2 border-red-500 bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300' : 'border-0 bg-smoke dark:bg-gray-800'"
+                                    :required="isNoMachineBranch"
+                                >
+                                    <template x-if="isNoMachineBranch">
+                                        <option value="">-- Select processing branch --</option>
+                                    </template>
                                     <template x-for="branch in availableProcessingBranches" :key="branch.id">
                                         <option :value="branch.id" :selected="String(branch.id) === String(processingBranchId)" x-text="`${branch.name} (${customersTodayLabel(branch)})`"></option>
                                     </template>
                                 </select>
                             </div>
+                            <p x-show="needsProcessingBranch" x-cloak class="text-[10px] font-semibold text-red-600">Required: choose which branch will process this laundry.</p>
                             <div class="flex flex-wrap gap-1" x-show="availableProcessingBranches.length > 1">
                                 <template x-for="branch in availableProcessingBranches" :key="'load-' + branch.id">
                                     <button
@@ -373,10 +386,11 @@
                     </div>
 
                     <!-- Save Button -->
-                    <button type="button" @click="showPaymentPanel = true; refreshIcons()" :disabled="items.length === 0 || !selectedCustomerId" class="mt-3 h-10 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <button type="button" @click="showPaymentPanel = true; refreshIcons()" :disabled="items.length === 0 || !selectedCustomerId || needsProcessingBranch" class="mt-3 h-10 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
                         <span x-show="items.length === 0">Add items to continue</span>
                         <span x-show="items.length > 0 && !selectedCustomerId">Select a customer</span>
-                        <span x-show="items.length > 0 && selectedCustomerId" class="flex items-center justify-center gap-2">
+                        <span x-show="items.length > 0 && selectedCustomerId && needsProcessingBranch">Select processing branch</span>
+                        <span x-show="items.length > 0 && selectedCustomerId && !needsProcessingBranch" class="flex items-center justify-center gap-2">
                             <span :data-lucide="isEditing ? 'save' : 'credit-card'" class="h-4 w-4"></span>
                             <span x-text="isEditing ? 'Review Changes' : 'Proceed to Payment'"></span>
                         </span>
@@ -487,7 +501,7 @@
                     
                     <!-- SMS Notification -->
                     <label x-show="!isEditing" class="flex items-start gap-2 rounded-lg border border-border p-3 dark:border-gray-800" :class="canSendSms ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'">
-                        <input type="checkbox" name="send_sms" value="1" :disabled="!canSendSms" :checked="canSendSms" class="mt-0.5 rounded border-border text-primary">
+                        <input type="checkbox" name="send_sms" value="1" x-model="sendSms" :disabled="!canSendSms" class="mt-0.5 rounded border-border text-primary">
                         <span>
                             <span class="block text-sm font-medium">Send order received SMS</span>
                             <span class="block text-xs text-muted" x-text="smsAvailabilityMessage"></span>
@@ -546,6 +560,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         serviceCategories: serviceCategories || [],
         items: initialState.initialItems || [],
         paymentType: initialState.paymentType || 'unpaid',
+        sendSms: false,
         discount: Number(initialState.discount || 0),
         paid: Number(initialState.paid || 0),
         showPaymentPanel: false,
@@ -560,6 +575,9 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         get isNoMachineBranch() {
             const branch = this.selectedBranch;
             return Boolean(branch && (branch.branch_type === 'pickup_dropoff' || (branch.machine_count ?? 0) === 0));
+        },
+        get needsProcessingBranch() {
+            return !this.isEditing && this.isNoMachineBranch && !this.processingBranchId;
         },
         get availableProcessingBranches() {
             return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
@@ -671,6 +689,12 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
 
             if (branch && branch.branch_type !== 'pickup_dropoff' && (branch.machine_count ?? 0) > 0 && fullService) {
                 this.processingBranchId = fullService.id;
+                return;
+            }
+
+            // No-machine branches must pick the processing branch themselves.
+            if (this.isNoMachineBranch) {
+                this.processingBranchId = '';
                 return;
             }
 
