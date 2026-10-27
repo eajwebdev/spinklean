@@ -283,6 +283,7 @@
             <form method="POST" action="{{ route('admin.po-transactions.statement-of-account.payments') }}" class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                 @csrf
                 <input type="hidden" name="customer_id" value="{{ $customer->id }}">
+                <input type="hidden" name="date_from" value="{{ $dateFrom }}">
                 <input type="hidden" name="date_to" value="{{ $dateTo }}">
                 <div class="mb-3">
                     <h2 class="font-semibold">Record Monthly Payment</h2>
@@ -334,7 +335,7 @@
                 <div class="overflow-x-auto">
                     <table class="w-full text-left text-sm">
                         <thead class="border-b border-border bg-smoke text-xs uppercase text-muted dark:border-gray-800 dark:bg-gray-950">
-                            <tr><th class="px-4 py-3">Date</th><th class="px-4 py-3">Payment Number</th><th class="px-4 py-3">PO Number</th><th class="px-4 py-3">Method</th><th class="px-4 py-3">Reference</th><th class="px-4 py-3 text-right">Amount</th></tr>
+                            <tr><th class="px-4 py-3">Date</th><th class="px-4 py-3">Payment Number</th><th class="px-4 py-3">PO Number</th><th class="px-4 py-3">For Statement</th><th class="px-4 py-3">Method</th><th class="px-4 py-3">Reference</th><th class="px-4 py-3 text-right">Amount</th></tr>
                         </thead>
                         <tbody class="divide-y divide-border dark:divide-gray-800">
                             @foreach($payments as $payment)
@@ -343,6 +344,15 @@
                                     <td class="whitespace-nowrap px-4 py-3">{{ $payment->paid_at?->format('M d, Y') }}</td>
                                     <td class="px-4 py-3 font-medium">{{ $payment->payment_number }}</td>
                                     <td class="px-4 py-3">{{ $paymentPo?->po_number ?? 'N/A' }}</td>
+                                    <td class="whitespace-nowrap px-4 py-3">
+                                        @if($payment->statement_to)
+                                            <a href="{{ route('admin.po-transactions.statement-of-account', array_filter(['customer_id' => $customer->id, 'date_from' => $payment->statement_from?->toDateString(), 'date_to' => $payment->statement_to->toDateString()])) }}" class="text-primary hover:underline">
+                                                SOA {{ $payment->statement_from ? $payment->statement_from->format('M j').' - ' : 'to ' }}{{ $payment->statement_to->format('M j, Y') }}
+                                            </a>
+                                        @else
+                                            <span class="text-muted">&mdash;</span>
+                                        @endif
+                                    </td>
                                     <td class="px-4 py-3">{{ \App\Support\StatusBadge::label($payment->payment_method) }}</td>
                                     <td class="px-4 py-3">{{ $payment->reference_no ?: 'N/A' }}</td>
                                     <td class="px-4 py-3 text-right font-medium">{{ $currency }} {{ number_format((float) $payment->amount, 2) }}</td>

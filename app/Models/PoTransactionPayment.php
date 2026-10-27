@@ -17,12 +17,16 @@ class PoTransactionPayment extends Model
         'reference_no',
         'amount',
         'remarks',
+        'statement_from',
+        'statement_to',
         'paid_at',
     ];
 
     protected $casts = [
         'amount' => 'decimal:2',
         'paid_at' => 'datetime',
+        'statement_from' => 'date',
+        'statement_to' => 'date',
     ];
 
     public function poTransaction() { return $this->belongsTo(PoTransaction::class); }

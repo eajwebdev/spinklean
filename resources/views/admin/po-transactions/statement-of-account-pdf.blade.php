@@ -26,6 +26,7 @@
         table.lines td.num { text-align: center; }
         table.lines td.money { text-align: right; white-space: nowrap; }
         table.lines tr.total td { border-bottom: none; border-top: 1px solid #111111; font-weight: bold; padding-top: 5px; }
+        table.lines tr.due td { border-bottom: none; font-weight: bold; padding-top: 2px; }
         .footer { margin-top: 10px; font-size: 9px; line-height: 1.35; }
         .footer .gap { margin-top: 8px; }
         .thanks { margin-top: 14px; font-weight: bold; text-align: center; }
@@ -108,6 +109,13 @@
                 <td class="money" colspan="{{ $hasDelivery ? 2 : 1 }}">TOTAL</td>
                 <td class="money">{{ $peso($soa['total']) }}</td>
             </tr>
+            @if(round((float) $summary['balance'], 2) !== round((float) $soa['total'], 2))
+                {{-- Payments already received, or older deliveries still unpaid, change what is owed. --}}
+                <tr class="due">
+                    <td colspan="{{ $hasDelivery ? 5 : 4 }}" class="money">AMOUNT DUE (delivered up to {{ $to->format('M j, Y') }}, less payments received)</td>
+                    <td class="money">{{ $peso($summary['balance']) }}</td>
+                </tr>
+            @endif
         </tbody>
     </table>
 

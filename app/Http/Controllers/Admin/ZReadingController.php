@@ -16,6 +16,7 @@ use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\ZReading;
 use App\Support\FinancialReconciliation;
+use App\Support\PoCollections;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -326,6 +327,12 @@ class ZReadingController extends Controller
             ->groupBy('payment_type')
             ->map(fn ($group) => round((float) $group->sum('amount'), 2))
             ->all();
+        // PO customers' payments received today are listed with the other previous payments.
+        $poPaymentItems = collect(PoCollections::paymentItems($branchId, $businessDate, $businessDate));
+        $previousPaymentTotals = collect($paymentTotals($previousPayments));
+        foreach ($poPaymentItems->groupBy('type') as $type => $items) {
+            $previousPaymentTotals[$type] = round((float) ($previousPaymentTotals[$type] ?? 0) + (float) $items->sum('amount'), 2);
+        }
         $regularUnpaidTotal = fn ($items) => round((float) $items
             ->reject(fn (JobOrder $order) => $order->poTransaction || $order->customer?->billing_type === 'po')
             ->sum('balance'), 2);
@@ -527,7 +534,7 @@ class ZReadingController extends Controller
                 'amounts' => collect($financial['payment_amounts'])->only(['cash', 'gcash', 'bank', 'unpaid', 'po', 'monthly_billing'])->all(),
                 'counts' => collect($financial['payment_counts'])->only(['cash', 'gcash', 'bank', 'unpaid', 'po', 'monthly_billing'])->all(),
                 'current_sales' => $paymentTotals($currentSalesPayments),
-                'previous_payments' => $paymentTotals($previousPayments),
+                'previous_payments' => $previousPaymentTotals->all(),
                 'previous_payment_items' => $previousPayments->map(fn (Payment $payment) => [
                     'paid_at' => $payment->paid_at?->toDateTimeString(),
                     'payment_number' => $payment->payment_number,
@@ -536,7 +543,8 @@ class ZReadingController extends Controller
                     'type' => $payment->payment_type,
                     'reference_no' => $payment->reference_no,
                     'amount' => round((float) $payment->amount, 2),
-                ])->all(),
+                ])->concat($poPaymentItems)->values()->all(),
+                'po_payments' => $financial['po_payments'],
                 'unpaid_amount' => 0,
                 'po_amount' => $financial['po_collections'],
                 'monthly_billing_amount' => $financial['monthly_billing_collections'],
@@ -580,7 +588,7 @@ class ZReadingController extends Controller
             'daily_total_sales' => round((float) $jobOrders->sum('total'), 2),
             'daily_unpaid_amount' => $regularUnpaidTotal($jobOrders),
             'current_sales_payment_total' => round((float) $currentSalesPayments->sum('amount'), 2),
-            'previous_payment_total' => round((float) $previousPayments->sum('amount'), 2),
+            'previous_payment_total' => round((float) $previousPayments->sum('amount') + (float) $poPaymentItems->sum('amount'), 2),
             'job_order_items' => $jobOrderItems,
             'service_totals' => $serviceTotals->map(fn ($row) => [
                 'category_name' => $this->humanCategoryLabel($row->category_name),

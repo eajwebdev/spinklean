@@ -15,9 +15,12 @@ use App\Models\JobOrder;
 use App\Models\JobOrderItem;
 use App\Models\MoneyMovement;
 use App\Models\Payment;
+use App\Models\PoDelivery;
+use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Models\ZReading;
 use App\Support\FinancialReconciliation;
+use App\Support\PoCollections;
 use App\Support\StatusBadge;
 use Carbon\CarbonPeriod;
 use Illuminate\Http\Request;
@@ -130,12 +133,41 @@ class DashboardController extends Controller
             ->groupBy('paid_date')
             ->pluck('total_amount', 'paid_date');
 
+        // PO customers' payments are sales on the day they pay.
+        $poSalesByDate = PoCollections::query($branchId, $dateFrom, $dateTo)
+            ->selectRaw('DATE(paid_at) as paid_date, COALESCE(SUM(amount), 0) as total_amount')
+            ->groupBy('paid_date')
+            ->pluck('total_amount', 'paid_date');
+
+        $expenses = BranchExpense::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('expense_date', '>=', $dateFrom)
+            ->whereDate('expense_date', '<=', $dateTo);
+        $expensesByDate = (clone $expenses)
+            ->selectRaw('DATE(expense_date) as expense_day, COALESCE(SUM(amount), 0) as total_amount')
+            ->groupBy('expense_day')
+            ->pluck('total_amount', 'expense_day');
+
+        $deliveredByDate = PoDelivery::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('delivered_on', '>=', $dateFrom)
+            ->whereDate('delivered_on', '<=', $dateTo)
+            ->selectRaw('DATE(delivered_on) as delivered_day, COALESCE(SUM(amount), 0) as total_amount')
+            ->groupBy('delivered_day')
+            ->pluck('total_amount', 'delivered_day');
+
         $salesLabels = [];
         $salesValues = [];
+        $poSalesValues = [];
+        $expenseValues = [];
+        $poDeliveredValues = [];
         foreach (CarbonPeriod::create($dateFrom, $dateTo) as $date) {
             $key = $date->toDateString();
             $salesLabels[] = $date->format('M d');
             $salesValues[] = round((float) ($salesByDate[$key] ?? 0), 2);
+            $poSalesValues[] = round((float) ($poSalesByDate[$key] ?? 0), 2);
+            $expenseValues[] = round((float) ($expensesByDate[$key] ?? 0), 2);
+            $poDeliveredValues[] = round((float) ($deliveredByDate[$key] ?? 0), 2);
         }
 
         $statusRows = (clone $ordersInRange)
@@ -152,6 +184,13 @@ class DashboardController extends Controller
             ->groupBy('payment_type')
             ->orderByDesc('total_amount')
             ->get();
+        $poPayments = $financial['po_payments'];
+        $paymentMix = collect([
+            'Cash' => (float) ($paymentMixRows->firstWhere('payment_type', 'cash')?->total_amount ?? 0) + $poPayments['cash'],
+            'GCash' => (float) ($paymentMixRows->firstWhere('payment_type', 'gcash')?->total_amount ?? 0) + $poPayments['gcash'],
+            'Bank Transfer' => (float) ($paymentMixRows->firstWhere('payment_type', 'bank')?->total_amount ?? 0) + $poPayments['bank'] - $poPayments['cheque'],
+            'Cheque' => $poPayments['cheque'],
+        ])->map(fn ($amount) => round($amount, 2))->filter(fn ($amount) => $amount > 0)->sortDesc();
 
         $topServices = JobOrderItem::query()
             ->join('job_orders', 'job_orders.id', '=', 'job_order_items.job_order_id')
@@ -199,12 +238,19 @@ class DashboardController extends Controller
             ->whereDate('payments.paid_at', '>=', $dateFrom)
             ->whereDate('payments.paid_at', '<=', $dateTo)
             ->groupBy('branches.id', 'branches.name')
-            ->orderByDesc('total_amount')
-            ->limit(8)
             ->get([
                 'branches.name as label',
                 DB::raw('COALESCE(SUM(payments.amount), 0) as total_amount'),
-            ]);
+            ])
+            ->concat(PoCollections::query($branchId, $dateFrom, $dateTo)
+                ->join('branches', 'po_transaction_payments.branch_id', '=', 'branches.id')
+                ->groupBy('branches.id', 'branches.name')
+                ->get(['branches.name as label', DB::raw('COALESCE(SUM(po_transaction_payments.amount), 0) as total_amount')]))
+            ->groupBy('label')
+            ->map(fn ($rows, $label) => (object) ['label' => $label, 'total_amount' => (float) $rows->sum('total_amount')])
+            ->sortByDesc('total_amount')
+            ->take(8)
+            ->values();
 
         $recentOrders = (clone $orders)
             ->financiallyActive()
@@ -221,6 +267,65 @@ class DashboardController extends Controller
                 'status_badge' => StatusBadge::classes($order->status),
                 'total' => $this->money($currency, (float) $order->total),
                 'url' => route('admin.job-orders.show', $order),
+            ])
+            ->values();
+
+        $expenseCategories = (clone $expenses)
+            ->selectRaw("COALESCE(NULLIF(category, ''), 'Uncategorized') as label, COALESCE(SUM(amount), 0) as total_amount, COUNT(*) as entries")
+            ->groupBy('label')
+            ->orderByDesc('total_amount')
+            ->limit(8)
+            ->get();
+
+        $recentExpenses = (clone $expenses)
+            ->with('branch:id,name')
+            ->latest('expense_date')
+            ->latest('id')
+            ->limit(8)
+            ->get()
+            ->map(fn (BranchExpense $expense) => [
+                'id' => $expense->id,
+                'date' => $expense->expense_date?->format('M d, Y'),
+                'title' => $expense->title ?: $expense->category,
+                'category' => $expense->category ?: 'Uncategorized',
+                'branch' => $expense->branch?->name ?? 'N/A',
+                'paid_from' => $expense->paid_from === 'owner' ? 'Owner' : 'Store',
+                'amount' => $this->money($currency, (float) $expense->amount),
+            ])
+            ->values();
+
+        $poOrdersInPeriod = (clone $ordersInRange)->financiallyActive()->whereHas('poTransaction')->count();
+        $poCustomers = PoCollections::balancesByCustomer($branchId)->take(10);
+        $poCustomerNames = Customer::query()->whereIn('id', $poCustomers->pluck('customer_id'))->pluck('name', 'id');
+        $lastPoPayments = PoTransactionPayment::query()
+            ->whereIn('customer_id', $poCustomers->pluck('customer_id'))
+            ->selectRaw('customer_id, MAX(paid_at) as last_paid_at')
+            ->groupBy('customer_id')
+            ->pluck('last_paid_at', 'customer_id');
+        $poCustomerRows = $poCustomers->map(fn (array $row) => [
+            'id' => $row['customer_id'],
+            'name' => $poCustomerNames[$row['customer_id']] ?? 'Customer #'.$row['customer_id'],
+            'open_orders' => $row['open_orders'],
+            'owed' => $this->money($currency, $row['delivered_unpaid']),
+            'not_delivered' => $this->money($currency, $row['not_yet_delivered']),
+            'last_paid' => isset($lastPoPayments[$row['customer_id']]) ? Carbon::parse($lastPoPayments[$row['customer_id']])->format('M d, Y') : 'No payment yet',
+            'soa_url' => route('admin.po-transactions.statement-of-account', ['customer_id' => $row['customer_id'], 'date_from' => $dateFrom, 'date_to' => $dateTo]),
+        ])->values();
+
+        $recentDeliveries = PoDelivery::query()
+            ->with('customer:id,name')
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->latest('delivered_on')
+            ->latest('id')
+            ->limit(6)
+            ->get()
+            ->map(fn (PoDelivery $delivery) => [
+                'id' => $delivery->id,
+                'dr_number' => $delivery->dr_number,
+                'customer' => $delivery->customer?->name,
+                'date' => $delivery->delivered_on->format('M d, Y'),
+                'amount' => $this->money($currency, (float) $delivery->amount),
+                'url' => route('admin.po-deliveries.print', $delivery),
             ])
             ->values();
 
@@ -265,6 +370,19 @@ class DashboardController extends Controller
             'generated_at' => now()->format('M d, Y h:i:s A'),
             'stats' => [
                 'sales' => $this->money($currency, $financial['sales_owned']),
+                'regular_sales' => $this->money($currency, $financial['regular_sales']),
+                'net' => $this->money($currency, $financial['sales_owned'] - $financial['expenses_total']),
+                'average_order' => $this->money($currency, $ordersCount > 0 ? (float) (clone $ordersInRange)->financiallyActive()->sum('total') / $ordersCount : 0),
+                'cash_collections' => $this->money($currency, $financial['cash_collections']),
+                'gcash_collections' => $this->money($currency, $financial['gcash_collections']),
+                'bank_collections' => $this->money($currency, $financial['bank_collections']),
+                'store_expenses' => $this->money($currency, $financial['store_cash_expenses'] + $financial['store_gcash_expenses'] + $financial['store_bank_expenses']),
+                'owner_expenses' => $this->money($currency, $financial['owner_paid_expenses']),
+                'po_payments' => $this->money($currency, $poPayments['total']),
+                'po_receivables' => $this->money($currency, $financial['po_receivables']),
+                'po_not_yet_delivered' => $this->money($currency, $financial['po_not_yet_delivered']),
+                'po_delivered' => $this->money($currency, array_sum($poDeliveredValues)),
+                'po_orders' => number_format($poOrdersInPeriod),
                 'collections' => $this->money($currency, $collectionsTotal),
                 'cash_drawer' => $this->money($currency, $financial['expected_cash_drawer']),
                 'gcash' => $this->money($currency, $financial['expected_gcash']),
@@ -282,14 +400,25 @@ class DashboardController extends Controller
                 'sales' => [
                     'labels' => $salesLabels,
                     'values' => $salesValues,
+                    'po_values' => $poSalesValues,
+                    'expense_values' => $expenseValues,
+                ],
+                'po_trend' => [
+                    'labels' => $salesLabels,
+                    'delivered' => $poDeliveredValues,
+                    'paid' => $poSalesValues,
+                ],
+                'expense_categories' => [
+                    'labels' => $expenseCategories->pluck('label')->values(),
+                    'values' => $expenseCategories->map(fn ($row) => round((float) $row->total_amount, 2))->values(),
                 ],
                 'status' => [
                     'labels' => $statusLabels,
                     'values' => $statusValues,
                 ],
                 'payment_mix' => [
-                    'labels' => $paymentMixRows->map(fn ($row) => StatusBadge::label($row->payment_type))->values(),
-                    'values' => $paymentMixRows->map(fn ($row) => round((float) $row->total_amount, 2))->values(),
+                    'labels' => $paymentMix->keys()->values(),
+                    'values' => $paymentMix->values(),
                 ],
                 'top_services' => [
                     'labels' => $topServices->pluck('label')->values(),
@@ -328,6 +457,14 @@ class DashboardController extends Controller
                 'amount' => $this->money($currency, (float) $row->total_amount),
             ])->values(),
             'recent_orders' => $recentOrders,
+            'recent_expenses' => $recentExpenses,
+            'expense_categories' => $expenseCategories->map(fn ($row) => [
+                'label' => $row->label,
+                'entries' => number_format((int) $row->entries),
+                'amount' => $this->money($currency, (float) $row->total_amount),
+            ])->values(),
+            'po_customers' => $poCustomerRows,
+            'recent_deliveries' => $recentDeliveries,
             'trusted_customers' => $trustedCustomers,
         ];
     }

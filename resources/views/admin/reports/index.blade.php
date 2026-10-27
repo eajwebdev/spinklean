@@ -44,7 +44,7 @@
             </div>
 
             <div class="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-end">
-                <form method="GET" action="{{ route('admin.reports.index') }}" class="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <form x-ref="filterForm" method="GET" action="{{ route('admin.reports.index') }}" class="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <input type="hidden" name="tab" :value="tab">
                     @if($canChooseBranch)
                         <label class="block">
@@ -126,6 +126,18 @@
         </div>
     </div>
 
+    <div class="flex flex-wrap items-center gap-1.5">
+        <span class="mr-1 text-xs font-medium text-muted">Quick range:</span>
+        @foreach($datePresets as $presetLabel => [$presetFrom, $presetTo])
+            <button
+                type="button"
+                @click="dateRange = @js($presetFrom.' to '.$presetTo); $nextTick(() => $refs.filterForm.submit())"
+                class="h-8 rounded-full border px-3 text-xs font-semibold transition {{ $dateFrom === $presetFrom && $dateTo === $presetTo ? 'border-primary bg-primary text-white' : 'border-border bg-white hover:bg-smoke dark:border-gray-700 dark:bg-gray-900 dark:hover:bg-gray-800' }}"
+            >{{ $presetLabel }}</button>
+        @endforeach
+        <span class="ml-2 text-xs text-muted">Showing {{ \Illuminate\Support\Carbon::parse($dateFrom)->format('M d, Y') }}{{ $dateFrom !== $dateTo ? ' to '.\Illuminate\Support\Carbon::parse($dateTo)->format('M d, Y') : '' }}</span>
+    </div>
+
     <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
         <div class="mb-3">
             <h2 class="text-base font-semibold">Financial Reconciliation</h2>
@@ -141,15 +153,18 @@
                 'accounts_payable' => 'Accounts Payable',
                 'unpaid_balance' => 'Unpaid Customer Balance',
                 'over_short' => 'Z Reading Over / Short',
+                'po_payments_total' => 'PO Payments (in sales)',
+                'po_receivables' => 'PO Owed (delivered, unpaid)',
             ] as $key => $label)
                 <div class="rounded-md bg-smoke p-3 dark:bg-gray-950">
                     <p class="text-xs text-muted">{{ $label }}</p>
-                    <p class="mt-1 font-semibold">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $financialSummary[$key], 2) }}</p>
+                    <p class="mt-1 font-semibold">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) ($key === 'po_payments_total' ? $financialSummary['po_payments']['total'] : $financialSummary[$key]), 2) }}</p>
                 </div>
             @endforeach
         </div>
         <p class="mt-3 text-xs text-muted">
             Drawer = cash collected + cash deposits/owner cash funding - store-cash expenses - cash withdrawals/remittances/payable repayments.
+            PO payments count as sales on the day paid; PO cheques count with bank.
         </p>
     </div>
 
@@ -303,20 +318,20 @@
 
     <div x-show="tab === 'sales'" class="grid gap-4 xl:grid-cols-2">
         <x-report-table title="Sales by Date">
-            <x-slot:head><th class="px-4 py-3">Date</th><th class="px-4 py-3 text-right">Payments</th><th class="px-4 py-3 text-right">Cash</th><th class="px-4 py-3 text-right">GCash</th><th class="px-4 py-3 text-right">Sales</th></x-slot:head>
+            <x-slot:head><th class="px-4 py-3">Date</th><th class="px-4 py-3 text-right">Payments</th><th class="px-4 py-3 text-right">Cash</th><th class="px-4 py-3 text-right">GCash</th><th class="px-4 py-3 text-right">Bank / Cheque</th><th class="px-4 py-3 text-right">of which PO</th><th class="px-4 py-3 text-right">Sales</th></x-slot:head>
             @forelse($salesByDate as $row)
-                <tr><td class="px-4 py-3">{{ \Illuminate\Support\Carbon::parse($row->report_date)->format('M d, Y') }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->cash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->gcash_amount, 2) }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
+                <tr><td class="px-4 py-3">{{ \Illuminate\Support\Carbon::parse($row->report_date)->format('M d, Y') }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->cash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->gcash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->bank_amount, 2) }}</td><td class="px-4 py-3 text-right text-indigo-700 dark:text-indigo-300">{{ (float) ($row->po_amount ?? 0) > 0 ? ($settings->currency ?? 'PHP').' '.number_format((float) $row->po_amount, 2) : '' }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
             @empty
-                <tr><td colspan="5" class="px-4 py-10 text-center text-muted">No sales found.</td></tr>
+                <tr><td colspan="7" class="px-4 py-10 text-center text-muted">No sales found.</td></tr>
             @endforelse
         </x-report-table>
 
         <x-report-table title="Sales by Branch">
-            <x-slot:head><th class="px-4 py-3">Branch</th><th class="px-4 py-3 text-right">Payments</th><th class="px-4 py-3 text-right">Cash</th><th class="px-4 py-3 text-right">GCash</th><th class="px-4 py-3 text-right">Sales</th></x-slot:head>
+            <x-slot:head><th class="px-4 py-3">Branch</th><th class="px-4 py-3 text-right">Payments</th><th class="px-4 py-3 text-right">Cash</th><th class="px-4 py-3 text-right">GCash</th><th class="px-4 py-3 text-right">Bank / Cheque</th><th class="px-4 py-3 text-right">of which PO</th><th class="px-4 py-3 text-right">Sales</th></x-slot:head>
             @forelse($salesByBranch as $row)
-                <tr><td class="px-4 py-3">{{ $row->branch_name }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->cash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->gcash_amount, 2) }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
+                <tr><td class="px-4 py-3">{{ $row->branch_name }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->cash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->gcash_amount, 2) }}</td><td class="px-4 py-3 text-right">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->bank_amount, 2) }}</td><td class="px-4 py-3 text-right text-indigo-700 dark:text-indigo-300">{{ (float) ($row->po_amount ?? 0) > 0 ? ($settings->currency ?? 'PHP').' '.number_format((float) $row->po_amount, 2) : '' }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
             @empty
-                <tr><td colspan="5" class="px-4 py-10 text-center text-muted">No branch sales found.</td></tr>
+                <tr><td colspan="7" class="px-4 py-10 text-center text-muted">No branch sales found.</td></tr>
             @endforelse
         </x-report-table>
     </div>
@@ -371,11 +386,78 @@
     <x-report-table title="Sales Payment Type" x-show="tab === 'payments'">
         <x-slot:head><th class="px-4 py-3">Type</th><th class="px-4 py-3 text-right">Count</th><th class="px-4 py-3 text-right">Total</th></x-slot:head>
         @forelse($paymentTypes as $row)
-            <tr><td class="px-4 py-3">{{ \App\Support\StatusBadge::label($row->payment_type) }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
+            <tr><td class="px-4 py-3">{{ $row->label ?? \App\Support\StatusBadge::label($row->payment_type) }}</td><td class="px-4 py-3 text-right">{{ $row->payments_count }}</td><td class="px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $row->total_amount, 2) }}</td></tr>
         @empty
             <tr><td colspan="3" class="px-4 py-10 text-center text-muted">No payments found.</td></tr>
         @endforelse
     </x-report-table>
+
+    <div x-show="tab === 'po'" x-cloak class="space-y-4">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            @foreach([
+                ['PO Payments Received', $poSummary['payments'], $poSummary['payments_count'].' payment line(s) in this range'],
+                ['Delivered (billed)', $poSummary['delivered'], $poSummary['deliveries_count'].' delivery receipt(s) in this range'],
+                ['Owed Now', $poSummary['owed'], 'Delivered, not yet paid'],
+                ['Not Yet Delivered', $poSummary['not_yet_delivered'], 'Billed once it goes out on a DR'],
+            ] as [$cardLabel, $cardAmount, $cardHint])
+                <div class="rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+                    <p class="text-xs text-muted">{{ $cardLabel }}</p>
+                    <p class="mt-1 text-lg font-semibold">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $cardAmount, 2) }}</p>
+                    <p class="text-xs text-muted">{{ $cardHint }}</p>
+                </div>
+            @endforeach
+        </div>
+
+        <x-report-table title="PO Payments Received">
+            <x-slot:head><th class="px-4 py-3">Date</th><th class="px-4 py-3">Payment #</th><th class="px-4 py-3">Customer</th><th class="px-4 py-3">PO / Job Order</th><th class="px-4 py-3">For Statement</th><th class="px-4 py-3">Method</th><th class="px-4 py-3">Reference</th><th class="px-4 py-3 text-right">Amount</th></x-slot:head>
+            @forelse($poPayments as $payment)
+                <tr>
+                    <td class="whitespace-nowrap px-4 py-3">{{ $payment->paid_at?->format('M d, Y') }}</td>
+                    <td class="px-4 py-3 font-medium">{{ $payment->payment_number }}</td>
+                    <td class="px-4 py-3">{{ $payment->customer?->name }}</td>
+                    <td class="px-4 py-3">{{ $payment->poTransaction?->po_number }}<span class="block text-xs text-muted">{{ $payment->poTransaction?->jobOrder?->job_order_number }}</span></td>
+                    <td class="whitespace-nowrap px-4 py-3">{{ $payment->statement_to ? ($payment->statement_from ? $payment->statement_from->format('M j').' - ' : 'to ').$payment->statement_to->format('M j, Y') : '' }}</td>
+                    <td class="px-4 py-3">{{ ['cash' => 'Cash', 'gcash' => 'GCash', 'bank' => 'Bank Transfer', 'cheque' => 'Cheque'][$payment->payment_method] ?? $payment->payment_method }}</td>
+                    <td class="px-4 py-3">{{ $payment->reference_no }}</td>
+                    <td class="whitespace-nowrap px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $payment->amount, 2) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="8" class="px-4 py-10 text-center text-muted">No PO payments in this range.</td></tr>
+            @endforelse
+        </x-report-table>
+
+        <div class="grid gap-4 xl:grid-cols-2">
+            <x-report-table title="Delivery Receipts (billed in this range)">
+                <x-slot:head><th class="px-4 py-3">Delivered</th><th class="px-4 py-3">DR #</th><th class="px-4 py-3">Customer</th><th class="px-4 py-3">Job Orders</th><th class="px-4 py-3 text-right">Amount</th></x-slot:head>
+                @forelse($poDeliveries as $delivery)
+                    <tr>
+                        <td class="whitespace-nowrap px-4 py-3">{{ $delivery->delivered_on->format('M d, Y') }}</td>
+                        <td class="px-4 py-3 font-medium">{{ $delivery->dr_number }}</td>
+                        <td class="px-4 py-3">{{ $delivery->customer?->name }}</td>
+                        <td class="px-4 py-3 text-xs">{{ $delivery->items->map(fn ($item) => $item->jobOrder?->job_order_number)->filter()->unique()->implode(', ') }}</td>
+                        <td class="whitespace-nowrap px-4 py-3 text-right font-medium">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $delivery->amount, 2) }}</td>
+                    </tr>
+                @empty
+                    <tr><td colspan="5" class="px-4 py-10 text-center text-muted">No deliveries in this range.</td></tr>
+                @endforelse
+            </x-report-table>
+
+            <x-report-table title="PO Balances by Customer (as of today)">
+                <x-slot:head><th class="px-4 py-3">Customer</th><th class="px-4 py-3 text-center">Open Orders</th><th class="px-4 py-3 text-right">Owed</th><th class="px-4 py-3 text-right">Not Yet Delivered</th><th class="px-4 py-3"></th></x-slot:head>
+                @forelse($poBalances as $balance)
+                    <tr>
+                        <td class="px-4 py-3 font-medium">{{ $balance['name'] }}</td>
+                        <td class="px-4 py-3 text-center">{{ $balance['open_orders'] }}</td>
+                        <td class="whitespace-nowrap px-4 py-3 text-right font-semibold text-red-600 dark:text-red-400">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $balance['delivered_unpaid'], 2) }}</td>
+                        <td class="whitespace-nowrap px-4 py-3 text-right text-amber-700 dark:text-amber-300">{{ $settings->currency ?? 'PHP' }} {{ number_format((float) $balance['not_yet_delivered'], 2) }}</td>
+                        <td class="px-4 py-3 text-right"><a href="{{ route('admin.po-transactions.statement-of-account', ['customer_id' => $balance['customer_id'], 'date_from' => $dateFrom, 'date_to' => $dateTo]) }}" class="whitespace-nowrap text-sm font-medium text-primary hover:underline">Statement</a></td>
+                    </tr>
+                @empty
+                    <tr><td colspan="5" class="px-4 py-10 text-center text-muted">No PO customer has a balance.</td></tr>
+                @endforelse
+            </x-report-table>
+        </div>
+    </div>
 
     <div x-show="tab === 'expenses'" class="space-y-4">
         <div class="grid gap-3 md:grid-cols-3">

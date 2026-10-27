@@ -16,11 +16,13 @@ use App\Models\JobOrderItem;
 use App\Models\LaundryServiceCategory;
 use App\Models\MoneyMovement;
 use App\Models\Payment;
+use App\Models\PoDelivery;
 use App\Models\SmsLog;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\ZReading;
 use App\Support\FinancialReconciliation;
+use App\Support\PoCollections;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -49,6 +51,7 @@ class ReportController extends Controller
         'receivables' => 'Receivables',
         'inventory' => 'Inventory Usage',
         'payments' => 'Payments',
+        'po' => 'PO / Corporate',
         'expenses' => 'Expenses',
         'payables' => 'Accounts Payable',
         'cash' => 'Cash Movements',
@@ -345,7 +348,7 @@ class ReportController extends Controller
                     'type' => $payment->payment_type,
                     'reference_no' => $payment->reference_no,
                     'amount' => round((float) $payment->amount, 2),
-                ])->values()->all(),
+                ])->concat(PoCollections::paymentItems($branchId, $dateFrom, $dateTo))->values()->all(),
             ],
             'expense_breakdown' => [
                 'store_cash' => $financial['store_cash_expenses'],
@@ -466,11 +469,51 @@ class ReportController extends Controller
             ->orderByDesc('total_amount')
             ->get();
 
+        // PO customers' payments (often one cheque a month for many job orders) are sales on the
+        // day they are paid, so they are added to the sales tables like any other payment.
+        $poPayments = PoCollections::query($branchId, $dateFrom, $dateTo)
+            ->with(['branch:id,name', 'customer:id,name', 'poTransaction:id,po_number,job_order_id', 'poTransaction.jobOrder:id,job_order_number', 'receiver:id,name'])
+            ->orderBy('paid_at')
+            ->orderBy('id')
+            ->get();
+        $salesByDate = $this->withPoSales($salesByDate, $poPayments, 'report_date', fn ($payment) => $payment->paid_at->toDateString())
+            ->sortBy('report_date')
+            ->values();
+        $salesByBranch = $this->withPoSales($salesByBranch, $poPayments, 'branch_name', fn ($payment) => $payment->branch?->name ?? 'N/A')
+            ->sortByDesc('total_amount')
+            ->values();
+
         $paymentTypes = (clone $payments)
             ->selectRaw('payment_type, COALESCE(SUM(amount), 0) as total_amount, COUNT(*) as payments_count')
             ->groupBy('payment_type')
             ->orderByDesc('total_amount')
+            ->get()
+            ->concat($poPayments->groupBy('payment_method')->map(fn ($group, $method) => (object) [
+                'payment_type' => 'po_'.$method,
+                'label' => 'PO payment - '.(['cash' => 'Cash', 'gcash' => 'GCash', 'bank' => 'Bank Transfer', 'cheque' => 'Cheque'][$method] ?? ucfirst($method)),
+                'total_amount' => round((float) $group->sum('amount'), 2),
+                'payments_count' => $group->count(),
+            ])->values());
+
+        $poDeliveries = PoDelivery::query()
+            ->with(['customer:id,name', 'branch:id,name', 'items.jobOrder:id,job_order_number'])
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('delivered_on', '>=', $dateFrom)
+            ->whereDate('delivered_on', '<=', $dateTo)
+            ->orderBy('delivered_on')
+            ->orderBy('id')
             ->get();
+        $poBalances = PoCollections::balancesByCustomer($branchId);
+        $poCustomerNames = Customer::query()->whereIn('id', $poBalances->pluck('customer_id'))->pluck('name', 'id');
+        $poBalances = $poBalances->map(fn (array $row) => [...$row, 'name' => $poCustomerNames[$row['customer_id']] ?? 'Customer #'.$row['customer_id']]);
+        $poSummary = [
+            'payments' => round((float) $poPayments->sum('amount'), 2),
+            'payments_count' => $poPayments->count(),
+            'delivered' => round((float) $poDeliveries->sum('amount'), 2),
+            'deliveries_count' => $poDeliveries->count(),
+            'owed' => round((float) $poBalances->sum('delivered_unpaid'), 2),
+            'not_yet_delivered' => round((float) $poBalances->sum('not_yet_delivered'), 2),
+        ];
 
         $gcashPayments = (clone $payments)
             ->where('payment_type', 'gcash')
@@ -797,6 +840,11 @@ class ReportController extends Controller
             'gcashPayments' => $gcashPayments,
             'inventoryUsage' => $inventoryUsage,
             'paymentTypes' => $paymentTypes,
+            'poPayments' => $poPayments,
+            'poDeliveries' => $poDeliveries,
+            'poBalances' => $poBalances,
+            'poSummary' => $poSummary,
+            'datePresets' => $this->datePresets(),
             'receivables' => $receivables,
             'salesByBranch' => $salesByBranch,
             'salesByDate' => $salesByDate,
@@ -811,6 +859,53 @@ class ReportController extends Controller
             'zReadings' => $zReadings,
             'zReadingSummary' => $zReadingSummary,
             'zServiceTotals' => $zCategorySourceTotals,
+        ];
+    }
+
+    /**
+     * Add PO payments to sales rows grouped by $key (date or branch). PO bank transfers and
+     * cheques go in the bank column; po_amount shows how much of each row came from PO customers.
+     */
+    private function withPoSales($rows, $poPayments, string $key, callable $groupKey)
+    {
+        $merged = collect($rows)->mapWithKeys(fn ($row) => [(string) $row->{$key} => (object) [
+            $key => $row->{$key},
+            'total_amount' => (float) $row->total_amount,
+            'cash_amount' => (float) $row->cash_amount,
+            'gcash_amount' => (float) $row->gcash_amount,
+            'bank_amount' => (float) $row->bank_amount,
+            'po_amount' => 0.0,
+            'payments_count' => (int) $row->payments_count,
+        ]]);
+
+        foreach ($poPayments as $payment) {
+            $group = (string) $groupKey($payment);
+            $row = $merged->get($group) ?? (object) [$key => $group, 'total_amount' => 0.0, 'cash_amount' => 0.0, 'gcash_amount' => 0.0, 'bank_amount' => 0.0, 'po_amount' => 0.0, 'payments_count' => 0];
+            $amount = (float) $payment->amount;
+            $row->{PoCollections::bucket($payment->payment_method).'_amount'} += $amount;
+            $row->total_amount += $amount;
+            $row->po_amount += $amount;
+            $row->payments_count++;
+            $merged->put($group, $row);
+        }
+
+        return $merged->values();
+    }
+
+    /**
+     * One-click date ranges for the report filters.
+     */
+    private function datePresets(): array
+    {
+        $today = today();
+
+        return [
+            'Today' => [$today->toDateString(), $today->toDateString()],
+            'Yesterday' => [$today->copy()->subDay()->toDateString(), $today->copy()->subDay()->toDateString()],
+            'This Week' => [$today->copy()->startOfWeek()->toDateString(), $today->toDateString()],
+            'This Month' => [$today->copy()->startOfMonth()->toDateString(), $today->toDateString()],
+            'Last Month' => [$today->copy()->subMonthNoOverflow()->startOfMonth()->toDateString(), $today->copy()->subMonthNoOverflow()->endOfMonth()->toDateString()],
+            'This Year' => [$today->copy()->startOfYear()->toDateString(), $today->toDateString()],
         ];
     }
 

@@ -229,7 +229,7 @@
     <h2>Sales by Date</h2>
     <table class="report">
         <thead>
-            <tr><th>Date</th><th class="right">Payments</th><th class="right">Cash</th><th class="right">GCash</th><th class="right">Sales</th></tr>
+            <tr><th>Date</th><th class="right">Payments</th><th class="right">Cash</th><th class="right">GCash</th><th class="right">Bank / Cheque</th><th class="right">of which PO</th><th class="right">Sales</th></tr>
         </thead>
         <tbody>
             @forelse($salesByDate as $row)
@@ -238,10 +238,12 @@
                     <td class="right">{{ $row->payments_count }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->cash_amount, 2) }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->gcash_amount, 2) }}</td>
+                    <td class="right">{{ $currency }} {{ number_format((float) $row->bank_amount, 2) }}</td>
+                    <td class="right">{{ (float) ($row->po_amount ?? 0) > 0 ? $currency.' '.number_format((float) $row->po_amount, 2) : '' }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->total_amount, 2) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="5" class="empty">No sales found.</td></tr>
+                <tr><td colspan="7" class="empty">No sales found.</td></tr>
             @endforelse
         </tbody>
     </table>
@@ -282,7 +284,7 @@
     <h2>Sales by Branch</h2>
     <table class="report">
         <thead>
-            <tr><th>Branch</th><th class="right">Payments</th><th class="right">Cash</th><th class="right">GCash</th><th class="right">Sales</th></tr>
+            <tr><th>Branch</th><th class="right">Payments</th><th class="right">Cash</th><th class="right">GCash</th><th class="right">Bank / Cheque</th><th class="right">of which PO</th><th class="right">Sales</th></tr>
         </thead>
         <tbody>
             @forelse($salesByBranch as $row)
@@ -291,10 +293,12 @@
                     <td class="right">{{ $row->payments_count }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->cash_amount, 2) }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->gcash_amount, 2) }}</td>
+                    <td class="right">{{ $currency }} {{ number_format((float) $row->bank_amount, 2) }}</td>
+                    <td class="right">{{ (float) ($row->po_amount ?? 0) > 0 ? $currency.' '.number_format((float) $row->po_amount, 2) : '' }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->total_amount, 2) }}</td>
                 </tr>
             @empty
-                <tr><td colspan="5" class="empty">No branch sales found.</td></tr>
+                <tr><td colspan="7" class="empty">No branch sales found.</td></tr>
             @endforelse
         </tbody>
     </table>
@@ -398,7 +402,7 @@
         <tbody>
             @forelse($paymentTypes as $row)
                 <tr>
-                    <td>{{ \App\Support\StatusBadge::label($row->payment_type) }}</td>
+                    <td>{{ $row->label ?? \App\Support\StatusBadge::label($row->payment_type) }}</td>
                     <td class="right">{{ $row->payments_count }}</td>
                     <td class="right">{{ $currency }} {{ number_format((float) $row->total_amount, 2) }}</td>
                 </tr>
@@ -427,6 +431,64 @@
                 </tr>
             @empty
                 <tr><td colspan="6" class="empty">No GCash payments found.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+    @endif
+
+    @if($show('po'))
+    <h2>PO / Corporate</h2>
+    <table class="report">
+        <thead>
+            <tr><th>PO Payments Received</th><th>Delivered (billed) in Range</th><th>Owed Now</th><th>Not Yet Delivered</th></tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td>{{ $currency }} {{ number_format((float) $poSummary['payments'], 2) }}</td>
+                <td>{{ $currency }} {{ number_format((float) $poSummary['delivered'], 2) }}</td>
+                <td>{{ $currency }} {{ number_format((float) $poSummary['owed'], 2) }}</td>
+                <td>{{ $currency }} {{ number_format((float) $poSummary['not_yet_delivered'], 2) }}</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>PO Payments Received</h2>
+    <table class="report">
+        <thead>
+            <tr><th>Date</th><th>Payment #</th><th>Customer</th><th>PO #</th><th>Method</th><th>Reference</th><th class="right">Amount</th></tr>
+        </thead>
+        <tbody>
+            @forelse($poPayments as $payment)
+                <tr>
+                    <td>{{ $payment->paid_at?->format('M d, Y') }}</td>
+                    <td>{{ $payment->payment_number }}</td>
+                    <td>{{ $payment->customer?->name }}</td>
+                    <td>{{ $payment->poTransaction?->po_number }}</td>
+                    <td>{{ ['cash' => 'Cash', 'gcash' => 'GCash', 'bank' => 'Bank Transfer', 'cheque' => 'Cheque'][$payment->payment_method] ?? $payment->payment_method }}</td>
+                    <td>{{ $payment->reference_no }}</td>
+                    <td class="right">{{ $currency }} {{ number_format((float) $payment->amount, 2) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="7" class="empty">No PO payments in this range.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    <h2>PO Balances by Customer (as of today)</h2>
+    <table class="report">
+        <thead>
+            <tr><th>Customer</th><th class="right">Open Orders</th><th class="right">Owed</th><th class="right">Not Yet Delivered</th></tr>
+        </thead>
+        <tbody>
+            @forelse($poBalances as $balance)
+                <tr>
+                    <td>{{ $balance['name'] }}</td>
+                    <td class="right">{{ $balance['open_orders'] }}</td>
+                    <td class="right">{{ $currency }} {{ number_format((float) $balance['delivered_unpaid'], 2) }}</td>
+                    <td class="right">{{ $currency }} {{ number_format((float) $balance['not_yet_delivered'], 2) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="4" class="empty">No PO customer has a balance.</td></tr>
             @endforelse
         </tbody>
     </table>

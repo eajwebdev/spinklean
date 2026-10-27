@@ -22,6 +22,7 @@ class ReportSectionPdfTest extends TestCase
         'receivables' => ['Receivables'],
         'inventory' => ['Inventory Usage'],
         'payments' => ['Sales Payment Type', 'GCash Reference Breakdown'],
+        'po' => ['PO / Corporate', 'PO Payments Received', 'PO Balances by Customer (as of today)'],
         'expenses' => ['Expenses'],
         'payables' => ['Accounts Payable', 'Accounts Payable Repayments'],
         'cash' => ['Cash Drawer Movements'],

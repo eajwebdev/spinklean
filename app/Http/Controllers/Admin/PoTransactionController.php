@@ -137,6 +137,19 @@ class PoTransactionController extends Controller
                 ]);
             }
 
+            // The status can't claim money that was never recorded, or reports and balances disagree.
+            if ($validated['status'] === 'paid' && round($remainingBalance - $paymentAmount, 2) > 0) {
+                throw ValidationException::withMessages([
+                    'status' => 'Record the payment to mark this PO paid. ₱'.number_format($remainingBalance - $paymentAmount, 2).' is still unpaid.',
+                ]);
+            }
+
+            if ($validated['status'] === 'partially_paid' && round((float) $po->paid_amount + $paymentAmount, 2) <= 0) {
+                throw ValidationException::withMessages([
+                    'status' => 'Record the payment received to mark this PO partially paid.',
+                ]);
+            }
+
             $this->applyPayment($request, $po, $paymentAmount, $validated['status'], $validated['payment_method'] ?? null, $validated['reference_no'] ?? null, $validated['remarks'] ?? null);
         });
 
@@ -151,6 +164,7 @@ class PoTransactionController extends Controller
     {
         $validated = $request->validate([
             'customer_id' => ['required', 'integer'],
+            'date_from' => ['nullable', 'date'],
             'date_to' => ['required', 'date'],
             'amount' => ['required', 'numeric', 'min:0.01'],
             'payment_method' => ['required', Rule::in(['cash', 'gcash', 'bank', 'cheque'])],
@@ -164,10 +178,14 @@ class PoTransactionController extends Controller
             ->when(! $user->isAdmin(), fn ($query) => $query->where('branch_id', $user->branch_id))
             ->findOrFail($validated['customer_id']);
         $dateTo = Carbon::parse($validated['date_to'])->toDateString();
+        $statement = [
+            'statement_from' => filled($validated['date_from'] ?? null) ? Carbon::parse($validated['date_from'])->toDateString() : null,
+            'statement_to' => $dateTo,
+        ];
         $paidAt = filled($validated['paid_on'] ?? null) ? Carbon::parse($validated['paid_on'])->setTimeFrom(now()) : now();
         $amount = round((float) $validated['amount'], 2);
 
-        $applied = DB::transaction(function () use ($request, $user, $customer, $dateTo, $paidAt, $amount, $validated) {
+        $applied = DB::transaction(function () use ($request, $user, $customer, $dateTo, $paidAt, $amount, $validated, $statement) {
             $purchaseOrders = PoTransaction::query()
                 ->with('deliveryItems.delivery')
                 ->where('customer_id', $customer->id)
@@ -195,7 +213,7 @@ class PoTransactionController extends Controller
                 }
 
                 $portion = min($left, PoDeliveries::dueAmount($po, $dateTo));
-                $this->applyPayment($request, $po, $portion, 'billed', $validated['payment_method'], $validated['reference_no'] ?? null, $validated['remarks'] ?? 'Statement payment', $paidAt);
+                $this->applyPayment($request, $po, $portion, 'billed', $validated['payment_method'], $validated['reference_no'] ?? null, $validated['remarks'] ?? 'Statement payment', $paidAt, $statement);
                 $left = round($left - $portion, 2);
                 $applied[] = $po->po_number;
             }
@@ -206,7 +224,7 @@ class PoTransactionController extends Controller
         return back()->with('success', 'Payment of ₱'.number_format($amount, 2).' applied to '.count($applied).' PO(s): '.implode(', ', $applied).'.');
     }
 
-    private function applyPayment(Request $request, PoTransaction $po, float $paymentAmount, string $status, ?string $method, ?string $referenceNo, ?string $remarks, ?Carbon $paidAt = null): void
+    private function applyPayment(Request $request, PoTransaction $po, float $paymentAmount, string $status, ?string $method, ?string $referenceNo, ?string $remarks, ?Carbon $paidAt = null, array $statement = []): void
     {
         $paidAmount = round((float) $po->paid_amount + $paymentAmount, 2);
         $balance = max(round((float) $po->amount - $paidAmount, 2), 0);
@@ -237,6 +255,8 @@ class PoTransactionController extends Controller
                 'reference_no' => $referenceNo,
                 'amount' => $paymentAmount,
                 'remarks' => $remarks,
+                'statement_from' => $statement['statement_from'] ?? null,
+                'statement_to' => $statement['statement_to'] ?? null,
                 'paid_at' => $paidAt ?? now(),
             ]);
 

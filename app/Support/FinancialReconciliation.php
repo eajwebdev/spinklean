@@ -80,9 +80,12 @@ class FinancialReconciliation
             ->pluck('total_amount', 'payment_method')
             ->map(fn ($amount) => round((float) $amount, 2));
 
-        $cashCollections = round((float) ($paymentAmounts['cash'] ?? 0), 2);
-        $gcashCollections = round((float) ($paymentAmounts['gcash'] ?? 0), 2);
-        $bankCollections = round((float) ($paymentAmounts['bank'] ?? 0), 2);
+        // PO customers' payments (usually one per month for many job orders) are sales and
+        // collections on the day they pay, like any other payment.
+        $poPayments = PoCollections::totals($branchId, $dateFrom, $dateTo);
+        $cashCollections = round((float) ($paymentAmounts['cash'] ?? 0) + $poPayments['cash'], 2);
+        $gcashCollections = round((float) ($paymentAmounts['gcash'] ?? 0) + $poPayments['gcash'], 2);
+        $bankCollections = round((float) ($paymentAmounts['bank'] ?? 0) + $poPayments['bank'], 2);
         $storeCashExpenses = round((float) ($expenseSummary->store_cash ?? 0), 2);
         $storeGcashExpenses = round((float) ($expenseSummary->store_gcash ?? 0), 2);
         $storeBankExpenses = round((float) ($expenseSummary->store_bank ?? 0), 2);
@@ -107,8 +110,14 @@ class FinancialReconciliation
             ->whereDate('business_date', '<=', $dateTo)
             ->sum('over_short_amount'), 2);
 
+        $poBalances = PoCollections::balances($branchId);
+
         return [
-            'sales_owned' => round((float) (clone $salesPayments)->sum('amount'), 2),
+            'sales_owned' => round((float) (clone $salesPayments)->sum('amount') + $poPayments['total'], 2),
+            'regular_sales' => round((float) (clone $salesPayments)->sum('amount'), 2),
+            'po_payments' => $poPayments,
+            'po_receivables' => $poBalances['delivered_unpaid'],
+            'po_not_yet_delivered' => $poBalances['not_yet_delivered'],
             'physical_collections' => round($cashCollections + $gcashCollections + $bankCollections, 2),
             'cash_collections' => $cashCollections,
             'gcash_collections' => $gcashCollections,

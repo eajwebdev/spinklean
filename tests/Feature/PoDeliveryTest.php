@@ -11,6 +11,8 @@ use App\Models\PoTransaction;
 use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Models\User;
+use App\Support\FinancialReconciliation;
+use App\Support\PoCollections;
 use App\Support\PoDeliveries;
 use App\Support\StatementOfAccountRows;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -173,6 +175,91 @@ class PoDeliveryTest extends TestCase
         $this->assertSame('200.00', $november->paid_amount);
         $this->assertSame(250.0, PoDeliveries::dueAmount($november, '2026-11-30'));
         $this->assertSame(['CHQ-1001', 'CHQ-1001'], PoTransactionPayment::query()->pluck('reference_no')->all());
+    }
+
+    public function test_po_payment_is_sales_on_the_day_paid_in_cash_or_bank_and_remembers_its_statement(): void
+    {
+        $first = $this->poOrder($this->hotel, '2026-10-05', [['Bed sheet', 30, 10]]);
+        $second = $this->poOrder($this->hotel, '2026-10-20', [['Towel', 20, 9]]);
+        $this->deliver($first, [PoDeliveries::lineKey('Bed sheet', 10) => 30], '2026-10-06', 'DR-1');
+        $this->deliver($second, [PoDeliveries::lineKey('Towel', 9) => 20], '2026-10-21', 'DR-2');
+
+        // Delivered in October but not paid yet: no sales, but owed.
+        $october = FinancialReconciliation::forPeriod($this->branch->id, '2026-10-01', '2026-10-31');
+        $this->assertSame(0.0, $october['sales_owned']);
+        $this->assertSame(480.0, $october['po_receivables']);
+
+        // The hotel pays the October statement in November: part cash, the rest by cheque.
+        $this->payStatement(['amount' => 100, 'date_from' => '2026-10-01', 'date_to' => '2026-10-31', 'payment_method' => 'cash', 'paid_on' => '2026-11-05'])->assertRedirect();
+        $this->payStatement(['amount' => 380, 'date_from' => '2026-10-01', 'date_to' => '2026-10-31', 'reference_no' => 'CHQ-77', 'paid_on' => '2026-11-06'])->assertRedirect();
+
+        $cashDay = FinancialReconciliation::forPeriod($this->branch->id, '2026-11-05', '2026-11-05');
+        $this->assertSame(100.0, $cashDay['sales_owned']);
+        $this->assertSame(100.0, $cashDay['cash_collections']);
+        $this->assertSame(100.0, $cashDay['expected_cash_drawer']);
+
+        $chequeDay = FinancialReconciliation::forPeriod($this->branch->id, '2026-11-06', '2026-11-06');
+        $this->assertSame(380.0, $chequeDay['sales_owned']);
+        $this->assertSame(380.0, $chequeDay['bank_collections']);
+        $this->assertSame(0.0, $chequeDay['cash_collections']);
+        $this->assertSame(380.0, $chequeDay['po_payments']['cheque']);
+        $this->assertSame(0.0, $chequeDay['po_receivables']);
+
+        $items = PoCollections::paymentItems($this->branch->id, '2026-11-06', '2026-11-06');
+        $this->assertCount(2, $items, 'One cheque split across both job orders.');
+        $this->assertSame(['bank', 'bank'], array_column($items, 'type'));
+        $this->assertSame('Cheque CHQ-77', $items[0]['reference_no']);
+        $this->assertSame(380.0, array_sum(array_column($items, 'amount')));
+
+        $payment = PoTransactionPayment::query()->where('reference_no', 'CHQ-77')->first();
+        $this->assertSame('2026-10-01', $payment->statement_from->toDateString());
+        $this->assertSame('2026-10-31', $payment->statement_to->toDateString());
+        $this->soa('2026-10-01', '2026-10-31')->assertSee('SOA Oct 1 - Oct 31, 2026');
+    }
+
+    public function test_dashboard_and_reports_include_po_payments_and_po_balances(): void
+    {
+        $po = $this->poOrder($this->hotel, '2026-10-05', [['Bed sheet', 50, 10]]);
+        $this->deliver($po, [PoDeliveries::lineKey('Bed sheet', 10) => 30], '2026-10-06', 'DR-1');
+        $this->payStatement(['amount' => 200, 'date_from' => '2026-10-01', 'date_to' => '2026-10-31', 'reference_no' => 'CHQ-5', 'paid_on' => '2026-10-30'])->assertRedirect();
+        $range = ['branch_id' => $this->branch->id, 'date_range' => '2026-10-01 to 2026-10-31'];
+
+        $dashboard = $this->actingAs($this->admin)->getJson(route('dashboard.data', $range))->assertOk()->json();
+        $this->assertSame('PHP 200.00', $dashboard['stats']['po_payments']);
+        $this->assertSame('PHP 200.00', $dashboard['stats']['sales']);
+        $this->assertSame('PHP 100.00', $dashboard['stats']['po_receivables']);       // 300 delivered - 200 paid
+        $this->assertSame('PHP 200.00', $dashboard['stats']['po_not_yet_delivered']); // 20 pieces left
+        $this->assertSame(['Cheque'], $dashboard['charts']['payment_mix']['labels']);
+        $this->assertSame('DYNASTY HOTEL', $dashboard['po_customers'][0]['name']);
+        $this->assertSame('DR-1', $dashboard['recent_deliveries'][0]['dr_number']);
+
+        $this->actingAs($this->admin)->get(route('dashboard', $range))->assertOk()->assertSee('PO / Corporate');
+
+        $this->actingAs($this->admin)->get(route('admin.reports.index', [...$range, 'tab' => 'po']))
+            ->assertOk()
+            ->assertSee('PO Payments Received')
+            ->assertSee('CHQ-5')
+            ->assertSee('PO payment - Cheque')
+            ->assertSee('Last Month')
+            ->assertViewHas('salesByDate', fn ($rows) => $rows->sole()->po_amount === 200.0 && $rows->sole()->bank_amount === 200.0)
+            ->assertViewHas('poSummary', fn ($summary) => $summary['owed'] === 100.0 && $summary['delivered'] === 300.0);
+
+        $this->actingAs($this->admin)->get(route('admin.reports.pdf', [...$range, 'section' => 'po']))
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+    }
+
+    public function test_po_cannot_be_marked_paid_without_recording_the_money(): void
+    {
+        $po = $this->poOrder($this->hotel, '2026-10-05', [['Towel', 10, 9]]);
+
+        $this->actingAs($this->admin)->patch(route('admin.po-transactions.update', $po), ['status' => 'paid'])->assertSessionHasErrors('status');
+        $this->actingAs($this->admin)->patch(route('admin.po-transactions.update', $po), ['status' => 'partially_paid'])->assertSessionHasErrors('status');
+        $this->assertSame('pending', $po->fresh()->status);
+
+        $this->actingAs($this->admin)->patch(route('admin.po-transactions.update', $po), [
+            'status' => 'paid', 'paid_amount' => 90, 'payment_method' => 'cash',
+        ])->assertSessionHasNoErrors();
+        $this->assertSame('paid', $po->fresh()->status);
     }
 
     public function test_voiding_a_dr_reopens_the_order_and_removes_it_from_the_statement(): void
