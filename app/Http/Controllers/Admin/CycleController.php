@@ -146,6 +146,7 @@ class CycleController extends Controller
                 'status',
                 'transaction_type',
                 'is_rush',
+                'notes',
                 'production_accepted_at',
                 'returned_to_branch_at',
                 'returned_received_at',
@@ -317,7 +318,7 @@ class CycleController extends Controller
 
         if ($jobOrder->awaitingReturnToDropoff()) {
             $jobOrder->loadMissing('branch');
-            $message = "{$jobOrder->job_order_number} belongs to {$jobOrder->branch?->name}. Return the laundry to {$jobOrder->branch?->name} first; they will mark it ready once they receive it.";
+            $message = "{$jobOrder->job_order_number} belongs to {$jobOrder->branch?->name}. Return the laundry to {$jobOrder->branch?->name} first; it is marked ready and the customer notified once they receive it.";
 
             return back()->with('error', $message)->withErrors(['status' => $message]);
         }
@@ -382,7 +383,7 @@ class CycleController extends Controller
                 return back()->with('error', $message)->withErrors(['action' => $message]);
             }
 
-            // No SMS here: the drop-off branch notifies the customer when it marks the laundry ready.
+            // No SMS here: the customer is notified when the drop-off branch confirms it received the laundry back.
             $jobOrder->update([
                 'status' => 'returning_to_branch',
                 'release_branch_id' => $jobOrder->branch_id,
@@ -413,7 +414,7 @@ class CycleController extends Controller
                 'processing_branch_id' => $processingBranchId,
             ], $jobOrder->branch_id);
 
-            return back()->with('success', 'Laundry sent back to '.$jobOrder->branch?->name.'. They will mark it ready once received.');
+            return back()->with('success', 'Laundry sent back to '.$jobOrder->branch?->name.'. The customer will be notified once they receive it.');
         }
 
         abort_unless(in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true), 422);

@@ -7,6 +7,7 @@ use App\Models\Branch;
 use App\Models\JobOrder;
 use App\Models\JobOrderTransfer;
 use App\Support\Activity;
+use App\Support\SmsNotifier;
 use App\Support\TagValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -71,6 +72,7 @@ class JobOrderTransferController extends Controller
                     'customer_phone' => $order?->customer?->phone ?? 'N/A',
                     'origin_branch_name' => $t->originBranch?->name ?? 'Branch',
                     'services' => $servicesList,
+                    'notes' => $order?->notes,
                     'total' => (float) ($order?->total ?? 0),
                     'balance' => (float) ($order?->balance ?? 0),
                     'payment_status' => $paymentStatus,
@@ -224,7 +226,9 @@ class JobOrderTransferController extends Controller
             return back()->with('info', "Tag #{$transfer->tag_number} was already marked as received.");
         }
 
-        DB::transaction(function () use ($transfer, $user, $request) {
+        $markedReady = false;
+
+        DB::transaction(function () use ($transfer, $user, $request, &$markedReady) {
             $transfer->update([
                 'transfer_status' => 'received',
                 'received_at' => now(),
@@ -233,15 +237,17 @@ class JobOrderTransferController extends Controller
 
             $jobOrder = $transfer->jobOrder;
             if ($jobOrder) {
+                // Receiving it back at the drop-off branch is what makes it ready for the customer.
+                // Orders returned under the old flow were already marked ready (and notified), so keep that status.
+                $markedReady = ! in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true);
+
                 $jobOrder->update([
                     'current_branch_id' => $transfer->destination_branch_id,
                     'release_branch_id' => $transfer->destination_branch_id,
                     'returned_received_at' => now(),
-                    // The drop-off branch marks it ready (and notifies the customer) as a separate step.
-                    // Orders returned under the old flow were already marked ready, so keep that status.
-                    'status' => in_array($jobOrder->status, ['ready_for_pickup', 'ready_for_delivery'], true)
-                        ? $jobOrder->status
-                        : 'back_at_branch',
+                    'status' => $markedReady
+                        ? ($jobOrder->transaction_type === 'delivery' ? 'ready_for_delivery' : 'ready_for_pickup')
+                        : $jobOrder->status,
                 ]);
 
                 Activity::log($request, 'returned_laundry_received_at_branch', $jobOrder, [
@@ -249,11 +255,22 @@ class JobOrderTransferController extends Controller
                     'tag_number' => $jobOrder->tag_number,
                     'origin_branch_id' => $transfer->origin_branch_id,
                     'branch_id' => $transfer->destination_branch_id,
+                    'status' => $jobOrder->status,
                 ], $transfer->destination_branch_id);
             }
         });
 
-        return back()->with('success', "Laundry (Tag #{$transfer->tag_number}) received back. Mark it Ready for Pickup or Ready for Delivery to notify the customer.");
+        $jobOrder = $transfer->jobOrder;
+
+        if ($markedReady && $jobOrder) {
+            SmsNotifier::jobOrderStatus($jobOrder);
+
+            $readyLabel = $jobOrder->status === 'ready_for_delivery' ? 'Ready for Delivery' : 'Ready for Pickup';
+
+            return back()->with('success', "Laundry (Tag #{$transfer->tag_number}) received back and marked {$readyLabel}. Customer SMS sent if SMS is enabled.");
+        }
+
+        return back()->with('success', "Laundry (Tag #{$transfer->tag_number}) received back.");
     }
 
     /**

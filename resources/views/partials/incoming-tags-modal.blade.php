@@ -298,7 +298,10 @@
                                             <span x-text="item.origin_branch_name"></span>
                                         </span>
                                     </td>
-                                    <td class="py-3 max-w-[12rem] truncate text-muted" :title="item.services" x-text="item.services"></td>
+                                    <td class="py-3 max-w-[12rem] text-muted">
+                                        <p class="truncate" :title="item.services" x-text="item.services"></p>
+                                        <p x-show="item.notes" class="mt-0.5 line-clamp-2 text-[11px] font-medium text-sky-700 dark:text-sky-300" :title="item.notes" x-text="'Notes: ' + item.notes"></p>
+                                    </td>
                                     <td class="py-3">
                                         <span
                                             class="rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase"

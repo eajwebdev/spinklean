@@ -777,6 +777,48 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $this->assertSame('returning_to_branch', $order->fresh()->status);
     }
 
+    public function test_branch_3_job_order_notes_are_visible_to_processing_branch(): void
+    {
+        $order = JobOrder::query()->create([
+            'branch_id' => $this->branch3->id,
+            'processing_branch_id' => $this->branch1->id,
+            'customer_id' => $this->b3Customer->id,
+            'job_order_number' => 'JO-NOTES-001',
+            'tag_number' => 'TAG-NOTES-001',
+            'status' => 'pending',
+            'notes' => 'Separate whites, no fabric softener',
+            'subtotal' => 150,
+            'total' => 150,
+            'paid_amount' => 0,
+            'balance' => 150,
+        ]);
+
+        JobOrderTransfer::query()->create([
+            'job_order_id' => $order->id,
+            'job_order_number' => $order->job_order_number,
+            'tag_number' => $order->tag_number,
+            'origin_branch_id' => $this->branch3->id,
+            'destination_branch_id' => $this->branch1->id,
+            'transfer_type' => 'outbound',
+            'transfer_status' => 'pending',
+            'transferred_at' => now(),
+        ]);
+
+        // Incoming tags modal at Branch 1
+        $this->actingAs($this->b1User)
+            ->getJson(route('admin.transfers.pending'))
+            ->assertOk()
+            ->assertJsonPath('transfers.0.notes', 'Separate whites, no fabric softener');
+
+        // Cycle monitoring at Branch 1 after the tag is received
+        $order->update(['status' => 'received', 'production_accepted_at' => now()]);
+
+        $this->actingAs($this->b1User)
+            ->get(route('admin.cycles.index'))
+            ->assertOk()
+            ->assertSee('Separate whites, no fabric softener');
+    }
+
     /**
      * Case 15: Starting machine cycle at Branch 3 is blocked (no machines).
      */
@@ -883,6 +925,7 @@ class DropoffPickupBranchWorkflowTest extends TestCase
         $order->refresh();
         $this->assertNotNull($order->returned_received_at);
         $this->assertSame($this->branch3->id, $order->current_branch_id);
+        $this->assertSame('ready_for_pickup', $order->status);
 
         $transfer->refresh();
         $this->assertSame('received', $transfer->transfer_status);

@@ -1458,8 +1458,17 @@ class CycleMonitoringTest extends TestCase
 
     public function test_dropoff_order_returns_to_dropoff_branch_which_marks_it_ready_and_releases_it(): void
     {
+        Http::fake([
+            'unismsapi.com/*' => Http::response(['message' => ['status' => 'sent']]),
+        ]);
+
         $this->completeSystemSettings();
         $this->activeTrial();
+        SystemSetting::current()->update([
+            'sms_enabled' => true,
+            'sms_provider' => 'unisms',
+            'sms_api_key' => 'test-api-key',
+        ]);
 
         $dropoffBranch = $this->createBranch([
             'name' => 'Pickup Branch',
@@ -1519,29 +1528,28 @@ class CycleMonitoringTest extends TestCase
             ->assertSessionHas('error');
         $this->assertSame('returning_to_branch', $order->fresh()->status);
 
-        // 3. Drop-off branch receives it: back at branch, still not ready.
+        $this->assertDatabaseCount('sms_logs', 0);
+
+        // 3. Drop-off branch confirms it received it: marked ready and the customer gets the ready SMS.
+        $this->actingAs($dropoffUser)
+            ->post(route('admin.transfers.receive-return', $transfer))
+            ->assertRedirect()
+            ->assertSessionHas('success');
+
+        $order->refresh();
+        $this->assertSame('ready_for_pickup', $order->status);
+        $this->assertSame($dropoffBranch->id, $order->current_branch_id);
+        $this->assertNotNull($order->returned_received_at);
+        $this->assertDatabaseCount('sms_logs', 1);
+        $this->assertStringContainsString('For pick-up', \App\Models\SmsLog::query()->firstOrFail()->message);
+
+        // Receiving again does not send a second SMS.
         $this->actingAs($dropoffUser)
             ->post(route('admin.transfers.receive-return', $transfer))
             ->assertRedirect();
+        $this->assertDatabaseCount('sms_logs', 1);
 
-        $order->refresh();
-        $this->assertSame('back_at_branch', $order->status);
-        $this->assertSame($dropoffBranch->id, $order->current_branch_id);
-        $this->assertNotNull($order->returned_received_at);
-
-        // The production branch still cannot mark it ready.
-        $this->actingAs($productionUser)
-            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_pickup'])
-            ->assertForbidden();
-        $this->assertSame('back_at_branch', $order->fresh()->status);
-
-        // 4. Drop-off branch marks it ready, then releases it.
-        $this->actingAs($dropoffUser)
-            ->patch(route('admin.job-orders.status', $order), ['status' => 'ready_for_delivery'])
-            ->assertRedirect()
-            ->assertSessionHas('success');
-        $this->assertSame('ready_for_delivery', $order->fresh()->status);
-
+        // 4. Drop-off branch releases it.
         $this->actingAs($dropoffUser)
             ->patch(route('admin.job-orders.release', $order))
             ->assertRedirect();

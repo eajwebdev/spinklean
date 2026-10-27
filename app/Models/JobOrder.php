@@ -42,7 +42,7 @@ class JobOrder extends Model
 
     /**
      * Laundry processed at another branch must physically come back to the drop-off branch
-     * before that branch can mark it ready (which notifies the customer).
+     * before it is marked ready; receiving it there marks it ready and notifies the customer.
      */
     public function awaitingReturnToDropoff(): bool
     {

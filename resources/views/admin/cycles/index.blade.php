@@ -251,6 +251,12 @@
                                 <p class="text-xs text-amber-600 font-medium">Transferred from {{ $order->branch?->name }}. Pending tag reception.</p>
                             @endif
                         @endif
+                        @if(filled($order->notes))
+                            <div class="mt-1.5 flex items-start gap-1.5 rounded-md border border-sky-200 bg-sky-50 px-2 py-1.5 text-xs text-sky-900 dark:border-sky-900/60 dark:bg-sky-500/10 dark:text-sky-200">
+                                <span data-lucide="sticky-note" class="mt-0.5 h-3.5 w-3.5 shrink-0"></span>
+                                <span class="whitespace-pre-line break-words"><span class="font-semibold">Notes:</span> {{ $order->notes }}</span>
+                            </div>
+                        @endif
                     </div>
                     <span class="shrink-0 {{ \App\Support\StatusBadge::classes($order->status) }}">
                         {{ $statusLabels[$order->status] ?? str_replace('_', ' ', ucfirst($order->status)) }}
@@ -344,7 +350,7 @@
                                 @else
                                     <button
                                         type="submit"
-                                        x-on:click.prevent="Swal.fire({ title: @js('Return to '.$order->branch?->name.'?'), text: @js('Production is finished. Send Tag #'.$order->tag_number.' back to '.$order->branch?->name.'. They will mark it ready and notify the customer once they receive it.'), icon: 'question', showCancelButton: true, confirmButtonText: 'Return Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                                        x-on:click.prevent="Swal.fire({ title: @js('Return to '.$order->branch?->name.'?'), text: @js('Production is finished. Send Tag #'.$order->tag_number.' back to '.$order->branch?->name.'. The customer gets the ready SMS once they confirm receipt.'), icon: 'question', showCancelButton: true, confirmButtonText: 'Return Laundry', confirmButtonColor: '#7c3aed' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
                                         class="inline-flex h-9 w-full items-center justify-center gap-1 rounded-md bg-purple-600 px-1 text-[11px] font-semibold text-white hover:bg-purple-700"
                                     >
                                         <span data-lucide="truck" class="h-4 w-4"></span>
@@ -392,7 +398,7 @@
                             <span>
                                 {{ $order->status === 'returning_to_branch'
                                     ? 'Returning to '.$order->branch?->name.' (waiting for them to receive it)'
-                                    : 'Received back at '.$order->branch?->name.'. They will mark it ready.' }}
+                                    : 'Received back at '.$order->branch?->name.'.' }}
                             </span>
                         </div>
                     @endif

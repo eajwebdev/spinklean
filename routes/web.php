@@ -34,11 +34,12 @@ Route::get('/pay', function () {
     return view('pay');
 });
 
-// Per-branch static QRPH payment pages, e.g. /osmena/pay and /pacana/pay.
+// Per-branch static QRPH payment pages, e.g. /osmena/pay, /pacana/pay and /limketkai/pay.
 Route::get('/{branch}/pay', function (string $branch) {
     $map = [
         'osmena' => ['image' => 'osmena-pay-qr.png', 'name' => 'Spin Klean Laundry - Osmeña', 'download' => 'SpinKlean-Osmena-QR.png'],
         'pacana' => ['image' => 'pacana-pay-qr.png', 'name' => 'Spin Klean Laundry - Pacana', 'download' => 'SpinKlean-Pacana-QR.png'],
+        'limketkai' => ['image' => 'limketkai-pay-qr.png', 'name' => 'Spin Klean Laundry - Limketkai', 'download' => 'SpinKlean-Limketkai-QR.png'],
     ];
 
     abort_unless(isset($map[$branch]), 404);
@@ -48,7 +49,7 @@ Route::get('/{branch}/pay', function (string $branch) {
         'branchName' => $map[$branch]['name'],
         'qrDownload' => $map[$branch]['download'],
     ]);
-})->where('branch', 'osmena|pacana')->name('pay.branch');
+})->where('branch', 'osmena|pacana|limketkai')->name('pay.branch');
 
 Route::get('/uploads/{path}', [PublicUploadController::class, 'show'])
     ->where('path', '.*')
