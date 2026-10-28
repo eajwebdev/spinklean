@@ -574,13 +574,20 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         vatEnabled: vatEnabled || false,
         get isNoMachineBranch() {
             const branch = this.selectedBranch;
-            return Boolean(branch && (branch.branch_type === 'pickup_dropoff' || (branch.machine_count ?? 0) === 0));
+            return Boolean(branch && ['pickup_dropoff', 'no_machine'].includes(branch.branch_type));
         },
         get needsProcessingBranch() {
             return !this.isEditing && this.isNoMachineBranch && !this.processingBranchId;
         },
         get availableProcessingBranches() {
-            return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
+            const others = this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);
+            if (this.isNoMachineBranch || !this.selectedBranch) {
+                return others;
+            }
+
+            // Full-service branches process their own laundry by default.
+            const own = this.processingBranches.find(b => String(b.id) === String(this.branchId)) || this.selectedBranch;
+            return [own, ...others];
         },
         customersTodayLabel(branch) {
             const count = Number(branch.customers_today ?? 0);
@@ -685,10 +692,9 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         },
         setDefaultProcessingBranch() {
             const branch = this.selectedBranch;
-            const fullService = this.processingBranches.find(option => String(option.id) === String(this.branchId));
 
-            if (branch && branch.branch_type !== 'pickup_dropoff' && (branch.machine_count ?? 0) > 0 && fullService) {
-                this.processingBranchId = fullService.id;
+            if (branch && !this.isNoMachineBranch) {
+                this.processingBranchId = branch.id;
                 return;
             }
 

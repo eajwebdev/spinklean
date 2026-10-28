@@ -174,6 +174,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::get('/cycles/job-orders/{jobOrder}/scan', [JobOrderController::class, 'acceptProductionScan'])->name('cycles.scan');
             Route::get('/cycles/job-orders/{jobOrder}/receipt', [JobOrderController::class, 'receipt'])->name('cycles.receipt');
             Route::patch('/cycles/job-orders/{jobOrder}/status', [CycleController::class, 'updateStatus'])->name('cycles.status');
+            Route::post('/cycles/job-orders/{jobOrder}/po-ready', [CycleController::class, 'markPoReady'])->name('cycles.po-ready');
             Route::patch('/cycles/job-orders/{jobOrder}/release', [CycleController::class, 'releaseAction'])->name('cycles.release');
             Route::post('/cycles/job-orders/{jobOrder}', [CycleController::class, 'storeCycle'])->name('cycles.store');
             Route::patch('/cycles/{cycle}/end', [CycleController::class, 'endCycle'])->name('cycles.end');

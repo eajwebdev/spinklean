@@ -52,11 +52,20 @@ class PoDeliveryController extends Controller
         $customers = $this->poCustomers($request);
         $customer = $request->integer('customer_id') ? $customers->firstWhere('id', $request->integer('customer_id')) : null;
         $purchaseOrders = $customer ? PoDeliveries::openPurchaseOrders($customer->id, $customer->branch_id) : collect();
+        // Only orders still in production are limited to their washed batches.
+        $batchProgress = PoDeliveries::batchProgress($purchaseOrders
+            ->reject(fn (PoTransaction $po) => in_array($po->jobOrder?->status, ['ready_for_pickup', 'ready_for_delivery', 'completed'], true))
+            ->pluck('job_order_id'));
 
         return view('admin.po-deliveries.create', [
             'customers' => $customers,
             'customer' => $customer,
             'purchaseOrders' => $purchaseOrders->map(fn (PoTransaction $po) => [
+                // Null when the order was not processed in recorded batches.
+                'marked_ready' => $batchProgress[$po->job_order_id]['ready'] ?? null,
+                'ready' => isset($batchProgress[$po->job_order_id])
+                    ? max(round($batchProgress[$po->job_order_id]['ready'] - (float) $po->deliveryItems->sum('quantity'), 2), 0)
+                    : null,
                 'id' => $po->id,
                 'po_number' => $po->po_number,
                 'job_order_number' => $po->jobOrder?->job_order_number,
@@ -85,6 +94,8 @@ class PoDeliveryController extends Controller
 
         $customer = $this->poCustomers($request)->firstWhere('id', (int) $validated['customer_id']);
         abort_unless($customer, 403);
+
+        PoDeliveries::assertWithinReady($validated['quantities']);
 
         $delivery = PoDeliveries::record(
             (int) $customer->branch_id,

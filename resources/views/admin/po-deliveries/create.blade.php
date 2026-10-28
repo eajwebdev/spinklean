@@ -113,6 +113,7 @@
                                 <span x-show="order.tag_number" x-text="' · Tag #' + order.tag_number"></span>
                                 <span x-text="' · ' + String(order.status || '').replaceAll('_', ' ')" class="capitalize"></span>
                             </p>
+                            <p x-show="order.marked_ready !== null" class="text-xs font-semibold text-indigo-700 dark:text-indigo-300" x-text="'Marked ready ' + num(order.marked_ready) + ' pcs · ' + num(order.ready) + ' pcs left to deliver'"></p>
                         </div>
                         <div class="flex gap-2">
                             <button type="button" @click="fill(order)" class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border px-3 text-xs font-semibold hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">

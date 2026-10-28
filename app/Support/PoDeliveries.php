@@ -2,8 +2,12 @@
 
 namespace App\Support;
 
+use App\Models\CycleRecord;
 use App\Models\JobOrder;
 use App\Models\PoDelivery;
+use App\Models\PoDeliveryItem;
+use App\Models\PoReadyBatch;
+use App\Models\PoTransactionPayment;
 use App\Models\PoTransaction;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -312,6 +316,152 @@ class PoDeliveries
                 ]);
             }
         }
+    }
+
+    /**
+     * Batch progress of PO job orders washed in recorded batches: pieces started and finished in
+     * Washing and Drying, and pieces marked ready. Orders washed without batch sizes are left out.
+     *
+     * @return Collection<int, array{washed: float, washed_done: float, dried: float, dried_done: float, ready: float}>
+     */
+    public static function batchProgress(iterable $jobOrderIds): Collection
+    {
+        $ids = collect($jobOrderIds)->filter()->unique()->values();
+
+        if ($ids->isEmpty()) {
+            return collect();
+        }
+
+        $progress = CycleRecord::query()
+            ->whereIn('job_order_id', $ids)
+            ->whereIn('cycle_type', ['wash', 'dry'])
+            ->orderBy('started_at')
+            ->orderBy('id')
+            ->get(['id', 'job_order_id', 'cycle_type', 'cycle_number', 'pieces', 'started_at', 'ended_at'])
+            ->groupBy('job_order_id')
+            ->map(fn (Collection $cycles) => self::progressFromCycles($cycles))
+            ->filter(fn (array $progress) => $progress['washed'] > 0);
+
+        if ($progress->isEmpty()) {
+            return collect();
+        }
+
+        $ready = PoReadyBatch::query()
+            ->whereIn('job_order_id', $progress->keys())
+            ->groupBy('job_order_id')
+            ->selectRaw('job_order_id, SUM(pieces) as ready')
+            ->pluck('ready', 'job_order_id');
+
+        return $progress->map(fn (array $row, $jobOrderId) => [
+            ...$row,
+            'ready' => round((float) ($ready[$jobOrderId] ?? 0), 2),
+        ]);
+    }
+
+    /**
+     * A batch spread over several machines shares one cycle number and carries its pieces on the
+     * first machine. A dry batch without pieces (recorded before batch sizes were asked for) dries
+     * everything that had finished washing by then and was not dried yet.
+     *
+     * @param  Collection<int, CycleRecord>  $cycles  one job order's wash and dry cycles, oldest first
+     */
+    private static function progressFromCycles(Collection $cycles): array
+    {
+        $washes = $cycles->where('cycle_type', 'wash')->whereNotNull('pieces');
+        $washed = (float) $washes->sum('pieces');
+        $dried = 0.0;
+        $driedDone = 0.0;
+
+        foreach ($cycles->where('cycle_type', 'dry')->groupBy('cycle_number') as $batch) {
+            $pieces = $batch->whereNotNull('pieces')->sum('pieces');
+
+            if ($pieces <= 0) {
+                $startedAt = $batch->min('started_at');
+                $washedBefore = (float) $washes
+                    ->filter(fn (CycleRecord $wash) => $wash->ended_at && $wash->ended_at <= $startedAt)
+                    ->sum('pieces');
+                $pieces = max($washedBefore - $dried, 0);
+            }
+
+            $dried += (float) $pieces;
+
+            if ($batch->every(fn (CycleRecord $cycle) => $cycle->ended_at)) {
+                $driedDone += (float) $pieces;
+            }
+        }
+
+        return [
+            'washed' => round($washed, 2),
+            'washed_done' => round((float) $washes->whereNotNull('ended_at')->sum('pieces'), 2),
+            'dried' => round($dried, 2),
+            'dried_done' => round($driedDone, 2),
+        ];
+    }
+
+    /**
+     * When a PO is processed in batches, a DR can only carry pieces already marked ready.
+     *
+     * @param  array<int|string, array<string, float|string>>  $quantities  [po_transaction_id => [line key => quantity]]
+     */
+    public static function assertWithinReady(array $quantities): void
+    {
+        $purchaseOrders = PoTransaction::query()
+            ->with(['jobOrder:id,job_order_number,status', 'deliveryItems'])
+            ->whereIn('id', array_map('intval', array_keys($quantities)))
+            ->get();
+        $progress = self::batchProgress($purchaseOrders->pluck('job_order_id'));
+
+        foreach ($purchaseOrders as $po) {
+            // Once production is finished, every piece counts as ready.
+            if (! $progress->has($po->job_order_id) || in_array($po->jobOrder?->status, ['ready_for_pickup', 'ready_for_delivery', 'completed'], true)) {
+                continue;
+            }
+
+            $sending = collect((array) ($quantities[$po->id] ?? []))->sum(fn ($quantity) => max((float) $quantity, 0));
+            $ready = max(round($progress[$po->job_order_id]['ready'] - (float) $po->deliveryItems->sum('quantity'), 2), 0);
+
+            if ($sending > $ready + self::EPSILON) {
+                throw ValidationException::withMessages([
+                    "quantities.{$po->id}" => 'Only '.self::number($ready).' pcs of '.$po->jobOrder?->job_order_number.' are marked ready to deliver. Mark the finished batch ready in Cycle Monitoring first.',
+                ]);
+            }
+        }
+    }
+
+    /**
+     * Remove a PO and everything recorded against it when its job order is deleted: its payments,
+     * its lines on DRs, and any DR left empty. DRs shared with other job orders keep their other
+     * lines, with the amount recalculated.
+     *
+     * @return array{payments: int, delivery_lines: int, deliveries_removed: int, deliveries_updated: int}
+     */
+    public static function purge(PoTransaction $po): array
+    {
+        $deliveryIds = PoDeliveryItem::query()->where('po_transaction_id', $po->id)->pluck('po_delivery_id')->unique();
+
+        $summary = [
+            'payments' => PoTransactionPayment::query()->where('po_transaction_id', $po->id)->delete(),
+            'delivery_lines' => PoDeliveryItem::query()->where('po_transaction_id', $po->id)->delete(),
+            'deliveries_removed' => 0,
+            'deliveries_updated' => 0,
+        ];
+
+        PoDelivery::query()->whereIn('id', $deliveryIds)->withSum('items', 'amount')->withCount('items')->get()
+            ->each(function (PoDelivery $delivery) use (&$summary): void {
+                if ((int) $delivery->items_count === 0) {
+                    $delivery->delete();
+                    $summary['deliveries_removed']++;
+
+                    return;
+                }
+
+                $delivery->update(['amount' => round((float) $delivery->items_sum_amount, 2)]);
+                $summary['deliveries_updated']++;
+            });
+
+        $po->delete();
+
+        return $summary;
     }
 
     public static function hasDeliveries(JobOrder $order): bool

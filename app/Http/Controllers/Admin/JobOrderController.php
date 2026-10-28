@@ -796,6 +796,9 @@ class JobOrderController extends Controller
                 'payments_count' => $payments->count(),
                 'cycles_count' => $jobOrder->cycles->count(),
                 'had_po_transaction' => (bool) $poTransaction,
+                'po_number' => $poTransaction?->po_number,
+                'po_ready_batches_count' => $jobOrder->poReadyBatches()->count(),
+                'transfers_count' => $jobOrder->transfers()->count(),
             ];
 
             $this->restoreInventoryForOrder($jobOrder, $request->user()?->id);
@@ -806,10 +809,17 @@ class JobOrderController extends Controller
                 ->orWhereIn('payment_id', $paymentIds)
                 ->delete();
 
-            $poTransaction?->delete();
+            // PO payments, DR lines and DRs left empty go with the PO.
+            if ($poTransaction) {
+                $snapshot['po_cleanup'] = PoDeliveries::purge($poTransaction);
+            }
+
             Payment::withoutGlobalScope('financially_active')->where('job_order_id', $jobOrder->id)->delete();
+            $jobOrder->poReadyBatches()->delete();
+            $jobOrder->transfers()->delete();
             $jobOrder->cycles()->delete();
             $jobOrder->items()->delete();
+            // The job order row is soft deleted, not removed, so its number is never reused.
             $jobOrder->delete();
 
             $this->recalculateCustomerLedger((int) $jobOrder->customer_id);

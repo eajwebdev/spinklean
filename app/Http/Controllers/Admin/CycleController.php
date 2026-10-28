@@ -10,6 +10,7 @@ use App\Models\JobOrder;
 use App\Models\JobOrderTransfer;
 use App\Models\ZReading;
 use App\Support\Activity;
+use App\Support\PoDeliveries;
 use App\Support\SmsNotifier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -63,6 +64,11 @@ class CycleController extends Controller
         $customerBranchId = $selectedBranchId;
         [$dateFrom, $dateTo] = $this->dateRange($request);
         $selectedStatus = in_array($request->status, self::FILTER_STATUSES, true) ? $request->status : null;
+        $selectedOrderType = in_array($request->order_type, ['po', 'regular'], true) ? $request->order_type : null;
+        // PO laundry goes out on Delivery Receipts, so the PO view keeps orders still waiting for delivery.
+        $hiddenStatuses = $selectedOrderType === 'po'
+            ? array_values(array_diff(self::DONE_STATUSES, ['ready_for_delivery']))
+            : self::DONE_STATUSES;
         $statusLabels = [
             'pending' => 'Pending',
             'received' => 'Received',
@@ -81,7 +87,7 @@ class CycleController extends Controller
             ->when($customerBranchId, fn ($query) => $query->where(fn ($query) => $query
                 ->where('branch_id', $customerBranchId)
                 ->orWhereHas('jobOrders', fn ($query) => $query
-                    ->when($selectedStatus, fn ($query) => $query->where('status', $selectedStatus), fn ($query) => $query->whereNotIn('status', [...self::DONE_STATUSES, 'cancelled']))
+                    ->when($selectedStatus, fn ($query) => $query->where('status', $selectedStatus), fn ($query) => $query->whereNotIn('status', [...$hiddenStatuses, 'cancelled']))
                     ->where(fn ($query) => $query
                         ->where(fn ($query) => $query
                             ->where('processing_branch_id', $customerBranchId)
@@ -99,7 +105,9 @@ class CycleController extends Controller
 
         $ordersQuery = JobOrder::query()
             ->where('status', '!=', 'cancelled')
-            ->when($selectedStatus, fn ($q) => $q->where('status', $selectedStatus), fn ($q) => $q->whereNotIn('status', self::DONE_STATUSES))
+            ->when($selectedStatus, fn ($q) => $q->where('status', $selectedStatus), fn ($q) => $q->whereNotIn('status', $hiddenStatuses))
+            ->when($selectedOrderType === 'po', fn ($q) => $q->whereHas('poTransaction'))
+            ->when($selectedOrderType === 'regular', fn ($q) => $q->whereDoesntHave('poTransaction'))
             ->when($selectedBranchId, fn ($q) => $q->where(fn ($query) => $query
                 ->where('branch_id', $selectedBranchId)
                 ->orWhere(fn ($query) => $query
@@ -121,8 +129,15 @@ class CycleController extends Controller
                     ->whereNull('processing_branch_id')
                     ->where('branch_id', $user->branch_id))))
             ->when($selectedCustomerId, fn ($q) => $q->where('customer_id', $selectedCustomerId))
-            ->when($dateFrom, fn ($q) => $q->where('created_at', '>=', Carbon::parse($dateFrom)->startOfDay()))
-            ->when($dateTo, fn ($q) => $q->where('created_at', '<=', Carbon::parse($dateTo)->endOfDay()))
+            ->when($dateFrom || $dateTo, fn ($q) => $q->where(fn ($query) => $query
+                ->where(fn ($query) => $query
+                    ->when($dateFrom, fn ($q) => $q->where('created_at', '>=', Carbon::parse($dateFrom)->startOfDay()))
+                    ->when($dateTo, fn ($q) => $q->where('created_at', '<=', Carbon::parse($dateTo)->endOfDay())))
+                // PO laundry is washed in batches over several days, so it stays on the board until delivered.
+                ->orWhere(fn ($query) => $query
+                    ->whereHas('poTransaction')
+                    ->where('status', '!=', 'completed')
+                    ->when($dateTo, fn ($q) => $q->where('created_at', '<=', Carbon::parse($dateTo)->endOfDay())))))
             ->when($request->filled('search'), function ($q) use ($request) {
                 $search = $request->search;
 
@@ -156,7 +171,11 @@ class CycleController extends Controller
                 'cycles',
                 'cycles as active_cycles_count' => fn ($query) => $query->whereNull('ended_at'),
             ])
+            ->withSum('items as ordered_pieces', 'quantity')
             ->with([
+                'poTransaction:id,job_order_id,customer_id,po_number',
+                'poTransaction.deliveryItems:id,po_delivery_id,po_transaction_id,quantity',
+                'poTransaction.deliveryItems.delivery:id,dr_number',
                 'branch:id,name,machine_count',
                 'processingBranch:id,name,machine_count',
                 'customer' => fn ($query) => $query
@@ -170,6 +189,7 @@ class CycleController extends Controller
                         'cycle_type',
                         'machine_number',
                         'cycle_number',
+                        'pieces',
                         'started_at',
                         'ended_at',
                     ])
@@ -183,6 +203,11 @@ class CycleController extends Controller
             ->withQueryString();
 
         $this->hydrateRouteBranches($orders->getCollection());
+
+        $poOrders = $orders->getCollection()->filter(fn (JobOrder $order) => $order->poTransaction);
+        $poBatchProgress = PoDeliveries::batchProgress($poOrders->pluck('id'));
+        $poOrders->filter(fn (JobOrder $order) => $poBatchProgress->has($order->id))
+            ->load(['poReadyBatches' => fn ($query) => $query->oldest()->with('user:id,name')]);
 
         $machineOverviewBranches = $branches
             ->when($selectedBranchId, fn ($branches) => $branches->where('id', $selectedBranchId))
@@ -206,6 +231,7 @@ class CycleController extends Controller
                 'job_orders.job_order_number',
                 'job_orders.is_rush',
                 'customers.name as customer_name',
+                DB::raw('EXISTS (SELECT 1 FROM po_transactions WHERE po_transactions.job_order_id = job_orders.id) as is_po'),
                 DB::raw("(SELECT COUNT(*) FROM job_orders AS customer_orders WHERE customer_orders.customer_id = customers.id AND customer_orders.deleted_at IS NULL AND customer_orders.status != 'cancelled') as customer_orders_count"),
             ])
             ->groupBy('operating_branch_id')
@@ -216,6 +242,7 @@ class CycleController extends Controller
                         'job_order_number' => $cycle->job_order_number,
                         'customer_name' => $cycle->customer_name,
                         'is_rush' => (bool) $cycle->is_rush,
+                        'is_po' => (bool) $cycle->is_po,
                         'is_loyal' => (int) $cycle->customer_orders_count >= 10,
                         'cycle_type' => $cycle->cycle_type,
                     ]])
@@ -331,8 +358,10 @@ class CycleController extends Controller
             'machineCounterReadingsByBranch' => $machineCounterReadingsByBranch,
             'machineCycleSourcesByBranch' => $machineCycleSourcesByBranch,
             'machineOverviewBranches' => $machineOverviewBranches,
+            'poBatchProgress' => $poBatchProgress,
             'selectedBranchId' => $selectedBranchId,
             'selectedCustomerId' => $selectedCustomerId,
+            'selectedOrderType' => $selectedOrderType,
             'statusFilters' => self::FILTER_STATUSES,
             'cycleTypes' => self::CYCLE_TYPES,
             'completionStatuses' => self::COMPLETION_STATUSES,
@@ -356,41 +385,117 @@ class CycleController extends Controller
             return back()->with('error', $message)->withErrors(['status' => $message]);
         }
 
-        $activeCycles = $jobOrder->cycles()
-            ->whereNull('ended_at')
-            ->get(['id', 'cycle_type', 'machine_number', 'cycle_number']);
-
-        if ($activeCycles->isNotEmpty()) {
-            $labels = $activeCycles
-                ->map(fn (CycleRecord $cycle) => (self::CYCLE_TYPES[$cycle->cycle_type] ?? ucfirst($cycle->cycle_type))
-                    .($cycle->machine_number ? " (Machine #{$cycle->machine_number})" : ''))
-                ->unique()
-                ->implode(', ');
-
-            $message = "Cannot mark {$jobOrder->job_order_number} as ".self::COMPLETION_STATUSES[$validated['status']].". End the active cycle(s) first: {$labels}.";
+        if (PoDeliveries::batchProgress([$jobOrder->id])->has($jobOrder->id)) {
+            $message = "{$jobOrder->job_order_number} is a PO processed in batches. Mark each washed and dried batch ready instead.";
 
             return back()->with('error', $message)->withErrors(['status' => $message]);
         }
 
+        if ($message = $this->activeCyclesMessage($jobOrder, $validated['status'])) {
+            return back()->with('error', $message)->withErrors(['status' => $message]);
+        }
+
+        $this->finishProduction($request, $jobOrder, $validated['status']);
+
+        return back()->with('success', 'Job order status updated.');
+    }
+
+    /**
+     * Mark washed-and-dried pieces of a PO ready for delivery or pickup. Once every piece is ready,
+     * production of the job order is finished.
+     */
+    public function markPoReady(Request $request, JobOrder $jobOrder)
+    {
+        $this->authorizeOrder($request, $jobOrder);
+
+        $validated = $request->validate([
+            'status' => ['required', Rule::in(['ready_for_delivery', 'ready_for_pickup'])],
+            'pieces' => ['required', 'numeric', 'min:0.01', 'max:999999'],
+        ]);
+
+        $progress = PoDeliveries::batchProgress([$jobOrder->id])->get($jobOrder->id);
+        abort_unless($progress && $jobOrder->poTransaction()->exists(), 422, 'This job order is not a PO processed in batches.');
+        abort_if(in_array($jobOrder->status, self::DONE_STATUSES, true), 422, 'Production of this job order is already finished.');
+
+        $number = $jobOrder->job_order_number;
+        $pieces = round((float) $validated['pieces'], 2);
+        $finished = max(round($progress['dried_done'] - $progress['ready'], 2), 0);
+        $orderedPieces = round((float) $jobOrder->items()->sum('quantity'), 2);
+        $completesOrder = $progress['ready'] + $pieces >= $orderedPieces - 0.001;
+        $label = self::COMPLETION_STATUSES[$validated['status']];
+
+        $message = match (true) {
+            $finished <= 0 => "No pcs of {$number} are washed and dried yet. End a Drying cycle first.",
+            $pieces > $finished + 0.001 => "Only {$this->pieces($finished)} pcs of {$number} are washed and dried.",
+            $completesOrder && $jobOrder->awaitingReturnToDropoff() => "{$number} must be returned to its drop-off branch before it is marked {$label}.",
+            $completesOrder => $this->activeCyclesMessage($jobOrder, $validated['status']),
+            default => null,
+        };
+
+        if ($message) {
+            return back()->with('error', $message)->withErrors(['pieces' => $message]);
+        }
+
+        $batch = $jobOrder->poReadyBatches()->create([
+            'pieces' => $pieces,
+            'ready_for' => $validated['status'] === 'ready_for_pickup' ? 'pickup' : 'delivery',
+            'user_id' => $request->user()->id,
+        ]);
+        $readyTotal = round($progress['ready'] + $pieces, 2);
+
+        Activity::log($request, 'po_batch_ready', $batch, [
+            'job_order_number' => $number,
+            'pieces' => $pieces,
+            'ready_for' => $batch->ready_for,
+            'ready_total' => $readyTotal,
+            'ordered' => $orderedPieces,
+        ], $jobOrder->branch_id);
+
+        if ($completesOrder) {
+            $this->finishProduction($request, $jobOrder, $validated['status']);
+        }
+
+        return back()->with('success', "{$this->pieces($pieces)} pcs of {$number} marked {$label} ({$this->pieces($readyTotal)} of {$this->pieces($orderedPieces)} pcs ready).");
+    }
+
+    private function activeCyclesMessage(JobOrder $jobOrder, string $status): ?string
+    {
+        $activeCycles = $jobOrder->cycles()
+            ->whereNull('ended_at')
+            ->get(['id', 'cycle_type', 'machine_number', 'cycle_number']);
+
+        if ($activeCycles->isEmpty()) {
+            return null;
+        }
+
+        $labels = $activeCycles
+            ->map(fn (CycleRecord $cycle) => (self::CYCLE_TYPES[$cycle->cycle_type] ?? ucfirst($cycle->cycle_type))
+                .($cycle->machine_number ? " (Machine #{$cycle->machine_number})" : ''))
+            ->unique()
+            ->implode(', ');
+
+        return "Cannot mark {$jobOrder->job_order_number} as ".self::COMPLETION_STATUSES[$status].". End the active cycle(s) first: {$labels}.";
+    }
+
+    private function finishProduction(Request $request, JobOrder $jobOrder, string $status): void
+    {
         $processingBranchId = $jobOrder->processing_branch_id ?: $jobOrder->branch_id;
         $jobOrder->update([
-            'status' => $validated['status'],
-            'completed_at' => $validated['status'] === 'completed' ? now() : null,
+            'status' => $status,
+            'completed_at' => $status === 'completed' ? now() : null,
             'production_completed_at' => $jobOrder->production_completed_at ?: now(),
             'current_branch_id' => $processingBranchId,
             'release_branch_id' => $processingBranchId,
-            'released_at' => $validated['status'] === 'completed' ? now() : null,
+            'released_at' => $status === 'completed' ? now() : null,
         ]);
 
         Activity::log($request, 'job_order_status_updated', $jobOrder, [
             'job_order_number' => $jobOrder->job_order_number,
-            'status' => $validated['status'],
+            'status' => $status,
         ], $jobOrder->branch_id);
 
         $jobOrder->loadMissing('customer');
         SmsNotifier::jobOrderStatus($jobOrder);
-
-        return back()->with('success', 'Job order status updated.');
     }
 
     public function releaseAction(Request $request, JobOrder $jobOrder)
@@ -498,8 +603,45 @@ class CycleController extends Controller
             'cycle_type' => ['required', Rule::in(array_keys(self::CYCLE_TYPES))],
             'machine_numbers' => ['nullable', 'array'],
             'machine_numbers.*' => ['integer', 'min:1'],
+            'pieces' => ['nullable', 'numeric', 'min:0.01', 'max:999999'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);
+
+        // PO laundry is processed in batches over several days: each wash and dry records how many
+        // pieces went in. A batch can only be dried after its wash has finished.
+        $batchPieces = null;
+        $progress = null;
+        if (in_array($validated['cycle_type'], ['wash', 'dry'], true) && $jobOrder->poTransaction()->exists()) {
+            $progress = PoDeliveries::batchProgress([$jobOrder->id])->get($jobOrder->id);
+            $batchPieces = isset($validated['pieces']) ? round((float) $validated['pieces'], 2) : null;
+            $number = $jobOrder->job_order_number;
+            $message = null;
+
+            if ($validated['cycle_type'] === 'wash') {
+                $orderedPieces = round((float) $jobOrder->items()->sum('quantity'), 2);
+                $leftToWash = max(round($orderedPieces - ($progress['washed'] ?? 0), 2), 0);
+
+                $message = match (true) {
+                    $leftToWash <= 0 => "All {$this->pieces($orderedPieces)} pcs of {$number} were already washed.",
+                    $batchPieces === null => "Enter how many pcs of {$number} go into this wash ({$this->pieces($leftToWash)} pcs left).",
+                    $batchPieces > $leftToWash + 0.001 => "Only {$this->pieces($leftToWash)} pcs of {$number} are left to wash.",
+                    default => null,
+                };
+            } elseif ($progress) {
+                $waitingToDry = max(round($progress['washed_done'] - $progress['dried'], 2), 0);
+
+                $message = match (true) {
+                    $waitingToDry <= 0 => "No washed pcs of {$number} are waiting to dry. End a Washing cycle first.",
+                    $batchPieces === null => "Enter how many pcs of {$number} go into this dry ({$this->pieces($waitingToDry)} pcs washed and waiting).",
+                    $batchPieces > $waitingToDry + 0.001 => "Only {$this->pieces($waitingToDry)} washed pcs of {$number} are waiting to dry.",
+                    default => null,
+                };
+            }
+
+            if ($message) {
+                return back()->with('error', $message)->withErrors(['pieces' => $message])->withInput();
+            }
+        }
 
         $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
         $machineCount = (int) ($processingBranch?->machine_count ?? 0);
@@ -524,8 +666,10 @@ class CycleController extends Controller
             }
         }
 
+        // A PO batch can dry while the next batch washes; its pieces were checked above.
         if (
             $validated['cycle_type'] === 'dry'
+            && ! $progress
             && $jobOrder->cycles()->where('cycle_type', 'wash')->whereNull('ended_at')->exists()
         ) {
             return back()->withErrors([
@@ -570,12 +714,14 @@ class CycleController extends Controller
 
         // Create one cycle record for each selected machine (or one record for non-machine cycles)
         if (in_array($validated['cycle_type'], ['wash', 'dry'], true) && ! empty($machineNumbers)) {
-            foreach ($machineNumbers as $machineNumber) {
+            foreach ($machineNumbers as $index => $machineNumber) {
                 $cycle = $jobOrder->cycles()->create([
                     'user_id' => $request->user()->id,
                     'cycle_type' => $validated['cycle_type'],
                     'machine_number' => (int) $machineNumber,
                     'cycle_number' => $cycleNumber,
+                    // A batch spread over several machines is counted once, on its first machine.
+                    'pieces' => $index === array_key_first($machineNumbers) ? $batchPieces : null,
                     'started_at' => now(),
                     'notes' => $validated['notes'] ?? null,
                 ]);
@@ -587,6 +733,7 @@ class CycleController extends Controller
                 'cycle_type' => $validated['cycle_type'],
                 'machine_number' => null,
                 'cycle_number' => $cycleNumber,
+                'pieces' => $batchPieces,
                 'started_at' => now(),
                 'notes' => $validated['notes'] ?? null,
             ]);
@@ -608,14 +755,21 @@ class CycleController extends Controller
         ]);
 
         $machineStr = ! empty($machineNumbers) ? ' on machine(s) #'.implode(', #', $machineNumbers) : '';
+        $piecesStr = $batchPieces !== null ? " with {$this->pieces($batchPieces)} pcs" : '';
         Activity::log($request, 'cycle_started', $createdCycles[0] ?? null, [
             'job_order_number' => $jobOrder->job_order_number,
             'cycle_type' => $validated['cycle_type'],
             'machine_numbers' => $machineNumbers,
             'cycle_number' => $cycleNumber,
+            'pieces' => $batchPieces,
         ], $jobOrder->branch_id);
 
-        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started'.$machineStr.'.');
+        return back()->with('success', self::CYCLE_TYPES[$validated['cycle_type']].' cycle started'.$piecesStr.$machineStr.'.');
+    }
+
+    private function pieces(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 2), '0'), '.');
     }
 
     public function endCycle(Request $request, CycleRecord $cycle)

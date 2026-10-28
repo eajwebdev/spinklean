@@ -115,6 +115,11 @@ class JobOrder extends Model
         return $this->hasMany(CycleRecord::class);
     }
 
+    public function poReadyBatches()
+    {
+        return $this->hasMany(PoReadyBatch::class);
+    }
+
     public function scopeRegularReceivable($query)
     {
         return $query

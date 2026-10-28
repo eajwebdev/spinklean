@@ -888,7 +888,7 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(50, $orders->total());
         $this->assertSame(8, $orders->first()->cycles_count);
         $this->assertCount(5, $orders->first()->cycles);
-        $this->assertLessThanOrEqual(25, count(DB::getQueryLog()));
+        $this->assertLessThanOrEqual(26, count(DB::getQueryLog()));
     }
 
     public function test_machine_can_be_reused_after_cycle_ends(): void
