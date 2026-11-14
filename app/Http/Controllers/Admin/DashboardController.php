@@ -17,6 +17,7 @@ use App\Models\MoneyMovement;
 use App\Models\Payment;
 use App\Models\SystemSetting;
 use App\Models\ZReading;
+use App\Support\DashboardAnalytics;
 use App\Support\FinancialReconciliation;
 use App\Support\StatusBadge;
 use Carbon\CarbonPeriod;
@@ -44,6 +45,7 @@ class DashboardController extends Controller
             'dateRangeValue' => $this->dateRangeValue($request),
             'selectedBranchId' => $this->branchId($request),
             'settings' => SystemSetting::current(),
+            'canSeeAudit' => $this->canSeeAudit($request),
         ]);
     }
 
@@ -132,10 +134,22 @@ class DashboardController extends Controller
 
         $salesLabels = [];
         $salesValues = [];
-        foreach (CarbonPeriod::create($dateFrom, $dateTo) as $date) {
-            $key = $date->toDateString();
-            $salesLabels[] = $date->format('M d');
-            $salesValues[] = round((float) ($salesByDate[$key] ?? 0), 2);
+        if ($dateFrom === $dateTo) {
+            // Single day (default "today"): show hourly sales so the trend is meaningful.
+            $hourly = array_fill(0, 24, 0.0);
+            (clone $payments)->get(['paid_at', 'amount'])->each(function (Payment $payment) use (&$hourly) {
+                $hourly[(int) $payment->paid_at->format('G')] += (float) $payment->amount;
+            });
+            foreach ($hourly as $hour => $amount) {
+                $salesLabels[] = Carbon::createFromTime($hour)->format('g A');
+                $salesValues[] = round($amount, 2);
+            }
+        } else {
+            foreach (CarbonPeriod::create($dateFrom, $dateTo) as $date) {
+                $key = $date->toDateString();
+                $salesLabels[] = $date->format('M d');
+                $salesValues[] = round((float) ($salesByDate[$key] ?? 0), 2);
+            }
         }
 
         $statusRows = (clone $ordersInRange)
@@ -260,9 +274,21 @@ class DashboardController extends Controller
             })
             ->values();
 
+        $insights = $this->insights($branchId, $dateFrom, $dateTo, $currency, $financial, $ordersInRange, $salesTotal);
+        $analytics = (new DashboardAnalytics($branchId, $dateFrom, $dateTo, $currency, $financial))
+            ->build($this->canSeeAudit($request));
+
         return [
             'currency' => $currency,
+            'analytics' => $analytics,
             'generated_at' => now()->format('M d, Y h:i:s A'),
+            'period' => $insights['period'],
+            'sales' => $insights['sales'],
+            'deductions' => $insights['deductions'],
+            'balances' => $insights['balances'],
+            'recent_payments' => $insights['recent_payments'],
+            'recent_expenses' => $insights['recent_expenses'],
+            'low_stock_items' => $insights['low_stock_items'],
             'stats' => [
                 'sales' => $this->money($currency, $financial['sales_owned']),
                 'collections' => $this->money($currency, $collectionsTotal),
@@ -307,6 +333,12 @@ class DashboardController extends Controller
                     'labels' => $branchSales->pluck('label')->values(),
                     'values' => $branchSales->map(fn ($row) => round((float) $row->total_amount, 2))->values(),
                 ],
+                'category_sales' => $analytics['category_sales']['chart'],
+                'payment_status' => $analytics['orders_breakdown']['chart'],
+                'receivables_aging' => $analytics['receivables_aging']['chart'],
+                'cycles' => $analytics['cycles']['chart'],
+                'expense_categories' => $insights['charts']['expense_categories'],
+                'deductions_breakdown' => $insights['charts']['deductions_breakdown'],
                 'financial_snapshot' => [
                     'labels' => ['Collections', 'Expenses', 'Receivables', 'Accounts Payable'],
                     'values' => [
@@ -329,6 +361,191 @@ class DashboardController extends Controller
             ])->values(),
             'recent_orders' => $recentOrders,
             'trusted_customers' => $trustedCustomers,
+        ];
+    }
+
+    /**
+     * Extra figures for the Sales, Deductions, and Cash & Balances dashboard tabs.
+     */
+    private function insights(?int $branchId, string $dateFrom, string $dateTo, string $currency, array $financial, $ordersInRange, float $salesTotal): array
+    {
+        $from = Carbon::parse($dateFrom);
+        $to = Carbon::parse($dateTo);
+        $days = $from->diffInDays($to) + 1;
+        $previousTo = $from->copy()->subDay();
+        $previousFrom = $previousTo->copy()->subDays($days - 1);
+
+        $previousSales = round((float) Payment::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('paid_at', '>=', $previousFrom->toDateString())
+            ->whereDate('paid_at', '<=', $previousTo->toDateString())
+            ->sum('amount'), 2);
+
+        $activeOrders = (clone $ordersInRange)->financiallyActive();
+        $orderTotals = (clone $activeOrders)
+            ->selectRaw('COUNT(*) as orders_count, COALESCE(SUM(subtotal), 0) as gross, COALESCE(SUM(discount), 0) as discount, COALESCE(SUM(total), 0) as billed, COALESCE(SUM(balance), 0) as unpaid')
+            ->first();
+        $ordersCount = (int) ($orderTotals->orders_count ?? 0);
+        $billed = round((float) ($orderTotals->billed ?? 0), 2);
+        $discounts = round((float) ($orderTotals->discount ?? 0), 2);
+
+        $paymentsCount = Payment::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('paid_at', '>=', $dateFrom)
+            ->whereDate('paid_at', '<=', $dateTo)
+            ->count();
+
+        $cashlessRepayments = round($financial['gcash_payable_repayments'] + $financial['bank_payable_repayments'], 2);
+        $totalDeductions = round($financial['expenses_total'] + $financial['cash_out'] + $cashlessRepayments, 2);
+        $netAfterExpenses = round($financial['sales_owned'] - $financial['expenses_total'], 2);
+
+        $expenses = BranchExpense::query()
+            ->with('branch')
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('expense_date', '>=', $dateFrom)
+            ->whereDate('expense_date', '<=', $dateTo);
+
+        $expenseCategories = (clone $expenses)
+            ->selectRaw("COALESCE(NULLIF(category, ''), 'Uncategorized') as label, COALESCE(SUM(amount), 0) as total_amount, COUNT(*) as entries")
+            ->groupBy('label')
+            ->orderByDesc('total_amount')
+            ->get();
+
+        $recentExpenses = (clone $expenses)
+            ->latest('expense_date')
+            ->latest('id')
+            ->limit(8)
+            ->get()
+            ->map(fn (BranchExpense $expense) => [
+                'id' => $expense->id,
+                'title' => $expense->title ?: ($expense->category ?: 'Expense'),
+                'category' => $expense->category ?: 'Uncategorized',
+                'branch' => $expense->branch?->name ?? 'N/A',
+                'method' => match (strtolower((string) ($expense->payment_method ?: 'cash'))) {
+                    'gcash' => 'GCash',
+                    'bank' => 'Bank',
+                    default => 'Cash',
+                },
+                'date' => $expense->expense_date?->format('M d, Y') ?? '',
+                'amount' => $this->money($currency, (float) $expense->amount),
+            ])
+            ->values();
+
+        $recentPayments = Payment::query()
+            ->with(['jobOrder', 'customer'])
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('paid_at', '>=', $dateFrom)
+            ->whereDate('paid_at', '<=', $dateTo)
+            ->latest('paid_at')
+            ->limit(8)
+            ->get()
+            ->map(fn (Payment $payment) => [
+                'id' => $payment->id,
+                'number' => $payment->payment_number,
+                'order' => $payment->jobOrder?->job_order_number ?? '—',
+                'customer' => $payment->customer?->name ?? 'Walk-in',
+                'method' => StatusBadge::label($payment->payment_type),
+                'time' => $payment->paid_at?->format($dateFrom === $dateTo ? 'h:i A' : 'M d, h:i A') ?? '',
+                'amount' => $this->money($currency, (float) $payment->amount),
+            ])
+            ->values();
+
+        $lowStockItems = Inventory::query()
+            ->with('branch')
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereColumn('quantity', '<=', 'reorder_level')
+            ->orderBy('quantity')
+            ->limit(8)
+            ->get()
+            ->map(fn (Inventory $item) => [
+                'id' => $item->id,
+                'name' => $item->name,
+                'branch' => $item->branch?->name ?? 'N/A',
+                'quantity' => number_format((float) $item->quantity, 2).' '.$item->unit,
+                'reorder_level' => number_format((float) $item->reorder_level, 2).' '.$item->unit,
+            ])
+            ->values();
+
+        $today = today()->toDateString();
+        $label = match (true) {
+            $dateFrom === $dateTo && $dateFrom === $today => 'Today',
+            $dateFrom === $dateTo && $dateFrom === today()->subDay()->toDateString() => 'Yesterday',
+            $dateFrom === $dateTo => $from->format('M d, Y'),
+            default => $from->format('M d').' – '.$to->format('M d, Y'),
+        };
+
+        return [
+            'period' => [
+                'label' => $label,
+                'is_today' => $dateFrom === $dateTo && $dateFrom === $today,
+                'is_single_day' => $dateFrom === $dateTo,
+                'range' => $dateFrom.' to '.$dateTo,
+                'previous_label' => $days === 1 ? $previousFrom->format('M d, Y') : $previousFrom->format('M d').' – '.$previousTo->format('M d, Y'),
+            ],
+            'sales' => [
+                'sales_owned' => $this->money($currency, $financial['sales_owned']),
+                'previous_sales' => $this->money($currency, $previousSales),
+                'change_percent' => $previousSales > 0 ? round((($salesTotal - $previousSales) / $previousSales) * 100, 1) : null,
+                'change_direction' => $salesTotal > $previousSales ? 'up' : ($salesTotal < $previousSales ? 'down' : 'flat'),
+                'gross_sales' => $this->money($currency, (float) ($orderTotals->gross ?? 0)),
+                'discounts' => $this->money($currency, $discounts),
+                'billed' => $this->money($currency, $billed),
+                'unpaid_from_period' => $this->money($currency, (float) ($orderTotals->unpaid ?? 0)),
+                'average_order' => $this->money($currency, $ordersCount > 0 ? $billed / $ordersCount : 0),
+                'payments_count' => number_format($paymentsCount),
+                'cash' => $this->money($currency, $financial['cash_collections']),
+                'gcash' => $this->money($currency, $financial['gcash_collections']),
+                'bank' => $this->money($currency, $financial['bank_collections']),
+                'po' => $this->money($currency, $financial['po_collections']),
+                'monthly_billing' => $this->money($currency, $financial['monthly_billing_collections']),
+                'net_after_expenses' => $this->money($currency, $netAfterExpenses),
+                'net_is_negative' => $netAfterExpenses < 0,
+            ],
+            'deductions' => [
+                'total' => $this->money($currency, $totalDeductions),
+                'expenses' => $this->money($currency, $financial['expenses_total']),
+                'store_cash' => $this->money($currency, $financial['store_cash_expenses']),
+                'store_gcash' => $this->money($currency, $financial['store_gcash_expenses']),
+                'store_bank' => $this->money($currency, $financial['store_bank_expenses']),
+                'owner_paid' => $this->money($currency, $financial['owner_paid_expenses']),
+                'withdrawals' => $this->money($currency, $financial['cash_out']),
+                'cashless_repayments' => $this->money($currency, $cashlessRepayments),
+                'discounts' => $this->money($currency, $discounts),
+                'categories' => $expenseCategories->map(fn ($row) => [
+                    'label' => $row->label,
+                    'entries' => number_format((int) $row->entries),
+                    'amount' => $this->money($currency, (float) $row->total_amount),
+                ])->values(),
+            ],
+            'balances' => [
+                'cash_collections' => $this->money($currency, $financial['cash_collections']),
+                'cash_in' => $this->money($currency, $financial['cash_in']),
+                'store_cash_expenses' => $this->money($currency, $financial['store_cash_expenses']),
+                'cash_out' => $this->money($currency, $financial['cash_out']),
+                'expected_cash_drawer' => $this->money($currency, $financial['expected_cash_drawer']),
+                'expected_gcash' => $this->money($currency, $financial['expected_gcash']),
+                'expected_bank' => $this->money($currency, $financial['expected_bank']),
+                'expected_total' => $this->money($currency, $financial['expected_total']),
+                'over_short' => $this->money($currency, $financial['over_short']),
+                'over_short_is_negative' => $financial['over_short'] < 0,
+            ],
+            'recent_payments' => $recentPayments,
+            'recent_expenses' => $recentExpenses,
+            'low_stock_items' => $lowStockItems,
+            'charts' => [
+                'expense_categories' => [
+                    'labels' => $expenseCategories->pluck('label')->values(),
+                    'values' => $expenseCategories->map(fn ($row) => round((float) $row->total_amount, 2))->values(),
+                ],
+                'deductions_breakdown' => [
+                    'labels' => ['Expenses', 'Withdrawals / Remittances', 'Cashless AP Repayments'],
+                    'values' => [
+                        round((float) $financial['expenses_total'], 2),
+                        round((float) $financial['cash_out'], 2),
+                        $cashlessRepayments,
+                    ],
+                ],
+            ],
         ];
     }
 
@@ -746,6 +963,11 @@ class DashboardController extends Controller
                 ['label' => 'Over / Short', 'value' => $this->money($currency, (float) $reading->over_short_amount)],
             ] : [],
         ];
+    }
+
+    private function canSeeAudit(Request $request): bool
+    {
+        return in_array($request->user()->role, ['super_admin', 'admin', 'branch_manager'], true);
     }
 
     private function assistantBranchId(Request $request): ?int

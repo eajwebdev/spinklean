@@ -1354,6 +1354,64 @@ class DropoffPickupBranchWorkflowTest extends TestCase
     }
 
     /**
+     * Receivables page can release ready laundry, using the same rules as Job Orders.
+     */
+    public function test_receivables_release_follows_job_order_release_rules(): void
+    {
+        $cashier = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $this->branch3->id,
+            'access' => ['receivables'],
+        ]);
+
+        $makeOrder = fn (string $number, Customer $customer) => JobOrder::query()->create([
+            'branch_id' => $this->branch3->id,
+            'current_branch_id' => $this->branch3->id,
+            'release_branch_id' => $this->branch3->id,
+            'customer_id' => $customer->id,
+            'job_order_number' => $number,
+            'status' => 'ready_for_pickup',
+            'subtotal' => 250,
+            'total' => 250,
+            'paid_amount' => 100,
+            'balance' => 150,
+        ]);
+
+        // Balance above the customer's unpaid limit: blocked.
+        $blocked = $makeOrder('JO-RCV-BLOCK', $this->b3Customer);
+        $this->actingAs($cashier)->get(route('admin.receivables.index'))
+            ->assertOk()
+            ->assertSee(route('admin.receivables.release', $blocked), false)
+            ->assertSee('Release blocked by unpaid balance', false);
+        $this->actingAs($cashier)->patch(route('admin.receivables.release', $blocked))->assertStatus(422);
+        $this->assertSame('ready_for_pickup', $blocked->fresh()->status);
+
+        // Balance within the unpaid limit: released.
+        $trusted = Customer::query()->create([
+            'branch_id' => $this->branch3->id,
+            'name' => 'Suki Customer',
+            'phone' => '09170001111',
+            'billing_type' => 'regular',
+            'unpaid_limit' => 500,
+            'is_active' => true,
+        ]);
+        $allowed = $makeOrder('JO-RCV-OK', $trusted);
+        $this->actingAs($cashier)->patch(route('admin.receivables.release', $allowed))->assertRedirect();
+        $allowed->refresh();
+        $this->assertSame('completed', $allowed->status);
+        $this->assertNotNull($allowed->released_at);
+
+        // Without receivables access the route is forbidden.
+        $other = $makeOrder('JO-RCV-NOACCESS', $trusted);
+        $noAccess = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $this->branch3->id,
+            'access' => ['inventory'],
+        ]);
+        $this->actingAs($noAccess)->patch(route('admin.receivables.release', $other))->assertForbidden();
+    }
+
+    /**
      * Case 25: Cancelling a Job Order at Branch 3 automatically cancels pending outbound transfers and decrements TAG count.
      */
     public function test_case_25_cancelling_job_order_at_branch_3_cancels_pending_transfers_and_decrements_tag_count(): void

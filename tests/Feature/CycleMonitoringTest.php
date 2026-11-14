@@ -408,6 +408,61 @@ class CycleMonitoringTest extends TestCase
         ]);
     }
 
+    public function test_iron_cycle_deducts_chosen_plastics_and_returns_them_when_cycle_removed(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $branch = $this->createBranch(['machine_count' => 2]);
+        $customer = $this->createCustomer($branch);
+        $user = User::factory()->create([
+            'role' => 'admin',
+            'branch_id' => $branch->id,
+            'access' => ['cycles'],
+        ]);
+        $order = $this->createJobOrder($branch, $customer);
+        $stock = fn (string $name, float $quantity) => Inventory::query()->create([
+            'branch_id' => $branch->id, 'name' => $name, 'unit' => 'pcs', 'quantity' => $quantity,
+            'reorder_level' => 0, 'unit_cost' => 2, 'is_active' => true,
+        ]);
+        // The real plastics used in production branches.
+        $packaging = $stock('Plastic Packaging', 5);
+        $big = $stock('Plastic Big', 0);
+        $small = $stock('Plastic Small', 5);
+
+        // The popup lists the branch plastics in Small / Big / Packaging order.
+        $this->actingAs($user)->get(route('admin.cycles.index', ['branch_id' => $branch->id]))
+            ->assertOk()
+            ->assertSee('Plastic Used')
+            ->assertSeeInOrder(['>Small<', '>Big<', '>Packaging<'], false)
+            ->assertDontSee('>Medium<', false);
+
+        // Not enough stock: nothing is started or deducted.
+        $this->actingAs($user)->post(route('admin.cycles.store', $order), [
+            'cycle_type' => 'iron',
+            'plastics' => [$small->id => 1, $big->id => 1],
+        ])->assertSessionHasErrors('plastics');
+        $this->assertSame(0, $order->cycles()->count());
+        $this->assertEquals(5, (float) $small->fresh()->quantity);
+
+        // 1 Small + 1 Packaging.
+        $this->actingAs($user)->post(route('admin.cycles.store', $order), [
+            'cycle_type' => 'iron',
+            'plastics' => [$small->id => 1, $packaging->id => 1, $big->id => 0],
+        ])->assertSessionHasNoErrors();
+
+        $cycle = $order->cycles()->where('cycle_type', 'iron')->firstOrFail();
+        $this->assertSame('Plastic: 1 Small, 1 Packaging', $cycle->notes);
+        $this->assertEquals(4, (float) $small->fresh()->quantity);
+        $this->assertEquals(4, (float) $packaging->fresh()->quantity);
+        $this->assertEquals(0, (float) $big->fresh()->quantity);
+
+        // Removing the cycle returns the plastics.
+        $this->actingAs($user)->delete(route('admin.cycles.destroy', $cycle))->assertRedirect();
+        $this->assertEquals(5, (float) $small->fresh()->quantity);
+        $this->assertEquals(5, (float) $packaging->fresh()->quantity);
+    }
+
     public function test_wash_cycle_requires_machine_when_branch_has_machines(): void
     {
         $this->completeSystemSettings();
@@ -888,7 +943,8 @@ class CycleMonitoringTest extends TestCase
         $this->assertSame(50, $orders->total());
         $this->assertSame(8, $orders->first()->cycles_count);
         $this->assertCount(5, $orders->first()->cycles);
-        $this->assertLessThanOrEqual(25, count(DB::getQueryLog()));
+        // 26 = previous budget of 25 + one constant query for the Ironing plastics list.
+        $this->assertLessThanOrEqual(26, count(DB::getQueryLog()));
     }
 
     public function test_machine_can_be_reused_after_cycle_ends(): void

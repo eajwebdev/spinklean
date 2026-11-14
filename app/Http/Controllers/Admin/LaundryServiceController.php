@@ -36,6 +36,7 @@ class LaundryServiceController extends Controller
 
         $services = LaundryService::with(['branch', 'inventoryUsages'])
             ->where('branch_id', $selectedBranchId)
+            ->whereNull('add_on_inventory_id') // Add Ons are managed in Inventory.
             ->when(in_array($request->pricing_type, self::PRICING_TYPES, true), fn ($query) => $query->where('pricing_type', $request->pricing_type))
             ->when(in_array($request->status, self::STATUS_FILTERS, true), fn ($query) => $query->where('is_active', $request->status === 'active'))
             ->when($request->filled('search'), fn ($query) => $query->where('name', 'like', "%{$request->search}%"))
@@ -90,6 +91,7 @@ class LaundryServiceController extends Controller
     public function update(Request $request, LaundryService $service)
     {
         $this->authorizeService($service);
+        $this->guardAddOn($service);
 
         $validated = $request->validate($this->rules());
         $validated = $this->normalizeBranch($validated);
@@ -111,6 +113,7 @@ class LaundryServiceController extends Controller
     public function destroy(LaundryService $service)
     {
         $this->authorizeService($service);
+        $this->guardAddOn($service);
         $service->delete();
 
         Activity::log(request(), 'service_deleted', $service, [
@@ -209,6 +212,15 @@ class LaundryServiceController extends Controller
             'items' => ['required', 'array', 'min:1'],
             'items.*' => ['nullable', 'numeric', 'min:0', 'max:999999.99'],
         ];
+    }
+
+    private function guardAddOn(LaundryService $service): void
+    {
+        if ($service->isAddOn()) {
+            throw ValidationException::withMessages([
+                'name' => "{$service->name} is an Add-On. Change its price, type or stock in Inventory.",
+            ]);
+        }
     }
 
     private function syncInventoryUsages(LaundryService $service, array $usages): void

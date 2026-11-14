@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\Customer;
 use App\Models\CycleRecord;
+use App\Models\Inventory;
+use App\Models\InventoryMovement;
 use App\Models\JobOrder;
 use App\Models\JobOrderTransfer;
 use App\Models\ZReading;
@@ -13,8 +15,10 @@ use App\Support\Activity;
 use App\Support\SmsNotifier;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class CycleController extends Controller
 {
@@ -320,8 +324,15 @@ class CycleController extends Controller
             })
             ->all();
 
+        $plasticsByBranch = $this->plasticItems($orders->getCollection()
+            ->map(fn (JobOrder $order) => (int) ($order->processing_branch_id ?: $order->branch_id))
+            ->unique()
+            ->values()
+            ->all());
+
         return view('admin.cycles.index', [
             'activeMachinesByBranch' => $activeMachinesByBranch,
+            'plasticsByBranch' => $plasticsByBranch,
             'branches' => $branches,
             'canChooseBranch' => $canChooseBranch,
             'customers' => $customers,
@@ -499,9 +510,19 @@ class CycleController extends Controller
             'machine_numbers' => ['nullable', 'array'],
             'machine_numbers.*' => ['integer', 'min:1'],
             'notes' => ['nullable', 'string', 'max:255'],
+            'plastics' => ['nullable', 'array'],
+            'plastics.*' => ['nullable', 'integer', 'min:0', 'max:9999'],
         ]);
 
         $processingBranch = $jobOrder->processingBranch ?: $jobOrder->branch;
+        // Ironing records the plastics used (e.g. 1 Small + 1 Packaging) and deducts them from inventory.
+        $plasticsUsed = $validated['cycle_type'] === 'iron'
+            ? $this->validatedPlastics($validated['plastics'] ?? [], (int) $processingBranch->id)
+            : collect();
+        if ($plasticsUsed->isNotEmpty()) {
+            $summary = 'Plastic: '.$plasticsUsed->map(fn ($row) => $row['quantity'].' '.$this->plasticLabel($row['inventory']->name))->implode(', ');
+            $validated['notes'] = trim(($validated['notes'] ?? '').' '.$summary);
+        }
         $machineCount = (int) ($processingBranch?->machine_count ?? 0);
 
         // For wash/dry cycles, require at least one machine
@@ -565,6 +586,7 @@ class CycleController extends Controller
             }
         }
 
+        DB::beginTransaction();
         $cycleNumber = $jobOrder->cycles()->where('cycle_type', $validated['cycle_type'])->max('cycle_number') + 1;
         $createdCycles = [];
 
@@ -592,6 +614,14 @@ class CycleController extends Controller
             ]);
             $createdCycles[] = $cycle;
         }
+
+        try {
+            $this->deductPlastics($plasticsUsed, $createdCycles[0], $jobOrder, $request->user()->id);
+        } catch (\Throwable $exception) {
+            DB::rollBack();
+            throw $exception;
+        }
+        DB::commit();
 
         $status = match ($validated['cycle_type']) {
             'wash' => 'washing',
@@ -649,11 +679,125 @@ class CycleController extends Controller
                 'cycle_number' => $cycleNumber,
             ], $jobOrder?->branch_id);
 
+            $this->restorePlastics($cycle, $request->user()->id);
             $cycle->delete();
             $this->renumberCycles($jobOrder, $cycleType);
         });
 
         return back()->with('success', 'Cycle record removed.');
+    }
+
+    /**
+     * Active plastic items (Small / Big / Packaging ...) per branch for the Ironing popup.
+     */
+    private function plasticItems(array $branchIds): array
+    {
+        return Inventory::query()
+            ->whereIn('branch_id', $branchIds)
+            ->where('is_active', true)
+            ->where('name', 'like', '%plastic%')
+            ->get(['id', 'branch_id', 'name', 'unit', 'quantity'])
+            ->sortBy(fn (Inventory $item) => $this->plasticRank($item->name).'-'.$item->name)
+            ->groupBy('branch_id')
+            ->map(fn ($items) => $items->map(fn (Inventory $item) => [
+                'id' => $item->id,
+                'name' => $item->name,
+                'label' => $this->plasticLabel($item->name),
+                'unit' => $item->unit,
+                'quantity' => (float) $item->quantity,
+            ])->values()->all())
+            ->all();
+    }
+
+    private function plasticRank(string $name): int
+    {
+        $name = strtolower($name);
+
+        return match (true) {
+            str_contains($name, 'small') => 1,
+            str_contains($name, 'medium') => 2,
+            str_contains($name, 'big'), str_contains($name, 'large') => 3,
+            default => 4,
+        };
+    }
+
+    private function plasticLabel(string $name): string
+    {
+        return trim(preg_replace('/\s*plastics?\s*/i', ' ', $name)) ?: $name;
+    }
+
+    private function validatedPlastics(array $plastics, int $branchId): Collection
+    {
+        $quantities = collect($plastics)
+            ->mapWithKeys(fn ($quantity, $inventoryId) => [(int) $inventoryId => (int) $quantity])
+            ->filter(fn ($quantity) => $quantity > 0);
+
+        if ($quantities->isEmpty()) {
+            return collect();
+        }
+
+        $items = Inventory::query()
+            ->whereIn('id', $quantities->keys())
+            ->where('branch_id', $branchId)
+            ->where('is_active', true)
+            ->where('name', 'like', '%plastic%')
+            ->get()
+            ->keyBy('id');
+
+        if ($items->count() !== $quantities->count()) {
+            throw ValidationException::withMessages(['plastics' => 'Choose plastics from this branch inventory.']);
+        }
+
+        return $quantities
+            ->map(fn ($quantity, $inventoryId) => ['inventory' => $items->get($inventoryId), 'quantity' => $quantity])
+            ->sortBy(fn ($row) => $this->plasticRank($row['inventory']->name))
+            ->values();
+    }
+
+    private function deductPlastics(Collection $plasticsUsed, CycleRecord $cycle, JobOrder $jobOrder, int $userId): void
+    {
+        foreach ($plasticsUsed as $row) {
+            $inventory = Inventory::query()->whereKey($row['inventory']->id)->lockForUpdate()->first();
+
+            if ((float) $inventory->quantity < $row['quantity']) {
+                throw ValidationException::withMessages([
+                    'plastics' => "{$inventory->name} is insufficient. Available: ".(float) $inventory->quantity." {$inventory->unit}. Needed: {$row['quantity']} {$inventory->unit}.",
+                ]);
+            }
+
+            $inventory->movements()->create([
+                'user_id' => $userId,
+                'cycle_record_id' => $cycle->id,
+                'movement_type' => 'out',
+                'quantity' => $row['quantity'],
+                'remarks' => "Ironing plastic for {$jobOrder->job_order_number}",
+            ]);
+            $inventory->update(['quantity' => (float) $inventory->quantity - $row['quantity']]);
+        }
+    }
+
+    /** Give back plastics taken by an ironing cycle that is being removed. */
+    private function restorePlastics(CycleRecord $cycle, int $userId): void
+    {
+        $movements = InventoryMovement::query()
+            ->where('cycle_record_id', $cycle->id)
+            ->where('movement_type', 'out')
+            ->get();
+
+        foreach ($movements as $movement) {
+            $inventory = Inventory::withTrashed()->whereKey($movement->inventory_id)->lockForUpdate()->first();
+            if (! $inventory) {
+                continue;
+            }
+
+            $inventory->movements()->create([
+                'user_id' => $userId,
+                'movement_type' => 'in',
+                'quantity' => $movement->quantity,
+                'remarks' => "Ironing plastic returned for {$cycle->jobOrder?->job_order_number} (cycle removed)",
+            ]);
+            $inventory->update(['quantity' => (float) $inventory->quantity + (float) $movement->quantity]);
+        }
     }
 
     private function renumberCycles(JobOrder $jobOrder, string $cycleType): void

@@ -63,6 +63,29 @@
                 Active item
             </label>
         </div>
+
+        <div x-data="{ addOn: @js((bool) old('is_add_on', $item->is_add_on)) }" class="rounded-lg border border-border p-3 dark:border-gray-800 md:col-span-2">
+            <label class="inline-flex items-center gap-2 text-sm font-medium">
+                <input type="checkbox" name="is_add_on" value="1" x-model="addOn" class="rounded border-border text-primary">
+                Sell as Add-On in Job Orders
+            </label>
+            <p class="mt-1 text-xs text-muted">Shows this product under "Add Ons" in Job Orders. Each one sold deducts 1 {{ $item->unit ?: 'unit' }} from this stock.</p>
+
+            <div x-show="addOn" x-cloak class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium">Add-On Type</label>
+                    <select name="add_on_type" :required="addOn" :disabled="!addOn" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                        @foreach(\App\Support\InventoryAddOns::TYPES as $typeKey => $typeLabel)
+                            <option value="{{ $typeKey }}" @selected(old('add_on_type', $item->add_on_type) === $typeKey)>{{ $typeLabel }}</option>
+                        @endforeach
+                    </select>
+                </div>
+                <div>
+                    <label class="mb-1.5 block text-sm font-medium">Selling Price</label>
+                    <input type="number" step="0.01" min="0" name="selling_price" value="{{ old('selling_price', $item->selling_price) }}" :required="addOn" :disabled="!addOn" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                </div>
+            </div>
+        </div>
     </div>
 
     @if($errors->any())

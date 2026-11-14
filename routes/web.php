@@ -154,6 +154,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
         Route::middleware('menu.access:receivables')->group(function () {
             Route::get('/receivables', [ReceivableController::class, 'index'])->name('receivables.index');
             Route::post('/receivables/job-orders/{jobOrder}/payments', [ReceivableController::class, 'storePayment'])->name('receivables.payments.store');
+            Route::patch('/receivables/job-orders/{jobOrder}/release', [JobOrderController::class, 'release'])->name('receivables.release');
         });
         Route::middleware('menu.access:po_transactions')->group(function () {
             Route::get('/po-transactions', [PoTransactionController::class, 'index'])->name('po-transactions.index');

@@ -56,6 +56,7 @@ class BranchController extends Controller
 
             DefaultLaundryServices::seedForBranch($branch);
             DefaultInventoryItems::seedForBranch($branch);
+            \App\Support\InventoryAddOns::seedForBranch($branch);
             DefaultServiceInventoryUsages::seedForBranch($branch);
             $setting = BranchSetting::firstOrCreate(
                 ['branch_id' => $branch->id],

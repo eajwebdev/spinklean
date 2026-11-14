@@ -15,6 +15,7 @@ class InventorySeeder extends Seeder
             ->where('is_active', true)
             ->each(function (Branch $branch) {
                 DefaultInventoryItems::seedForBranch($branch);
+                \App\Support\InventoryAddOns::seedForBranch($branch);
                 DefaultServiceInventoryUsages::seedForBranch($branch);
             });
     }

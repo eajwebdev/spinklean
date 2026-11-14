@@ -282,7 +282,7 @@
                         </button>
                     </template>
                     <template x-for="service in filteredServices" :key="service.id">
-                        <button type="button" @click="add(service)" class="group rounded-lg border border-border p-3 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm dark:border-gray-800 dark:hover:bg-gray-950">
+                        <button type="button" @click="add(service)" :class="isAddOn(service) && addOnRemaining(service) <= 0 ? 'opacity-50' : ''" class="group rounded-lg border border-border p-3 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm dark:border-gray-800 dark:hover:bg-gray-950">
                             <div class="flex items-start justify-between gap-2">
                                 <div class="flex min-w-0 items-start gap-2.5">
                                     <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition group-hover:scale-105">
@@ -291,6 +291,7 @@
                                     <div class="min-w-0">
                                         <p class="truncate text-sm font-medium" x-text="service.name"></p>
                                         <p class="mt-0.5 text-[10px] capitalize text-muted" x-text="service.pricing_type"></p>
+                                        <p x-show="isAddOn(service)" class="mt-0.5 text-[10px] font-semibold" :class="addOnRemaining(service) <= 0 ? 'text-red-600' : (service.low_stock ? 'text-amber-600' : 'text-green-700 dark:text-green-400')" x-text="stockLabel(service)"></p>
                                     </div>
                                 </div>
                                 <span class="shrink-0 rounded-md bg-primary/10 px-2 py-1 text-xs font-bold text-primary">
@@ -517,6 +518,35 @@
         </div>
     </form>
 
+    <!-- Fabcon Add-On Modal -->
+    <div x-cloak x-show="fabconPrompt.open" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm" @keydown.escape.window="fabconPrompt.open && chooseFabcon(null)">
+        <div class="w-full max-w-md rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-900">
+            <div class="mb-1 flex items-center gap-2">
+                <span data-lucide="droplet" class="h-5 w-5 text-primary"></span>
+                <h2 class="text-lg font-semibold">Choose Fabcon</h2>
+            </div>
+            <p class="mb-4 text-xs text-muted">
+                <span x-text="fabconPrompt.source"></span> is in the cart. Add a fabric conditioner add-on, or choose None.
+            </p>
+
+            <div class="grid grid-cols-2 gap-2">
+                <template x-for="addOn in fabconAddOns" :key="'fabcon-' + addOn.id">
+                    <button type="button" @click="chooseFabcon(addOn)" :disabled="addOnRemaining(addOn) <= 0" class="flex items-center justify-between gap-2 rounded-lg border border-border p-3 text-left transition hover:border-primary hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:border-border disabled:hover:bg-transparent dark:border-gray-800">
+                        <span class="min-w-0">
+                            <span class="block truncate text-sm font-medium" x-text="addOn.name"></span>
+                            <span class="block text-[10px] font-semibold" :class="addOnRemaining(addOn) <= 0 ? 'text-red-600' : (addOn.low_stock ? 'text-amber-600' : 'text-green-700 dark:text-green-400')" x-text="stockLabel(addOn)"></span>
+                        </span>
+                        <span class="shrink-0 rounded-md bg-primary/10 px-2 py-0.5 text-xs font-bold text-primary">{{ $appSettings?->currency ?? 'PHP' }} <span x-text="money(addOn.price)"></span></span>
+                    </button>
+                </template>
+                <button type="button" @click="chooseFabcon(null)" class="col-span-2 flex items-center justify-center gap-2 rounded-lg border border-dashed border-border p-3 text-sm font-medium text-muted transition hover:border-red-400 hover:text-red-600 dark:border-gray-700">
+                    <span data-lucide="ban" class="h-4 w-4"></span>
+                    None
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Quick Add Customer Modal -->
     <div x-cloak x-show="quickCustomerOpen" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
         <div @click.outside="quickCustomerOpen = false" class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-white p-6 shadow-2xl dark:bg-gray-900">
@@ -559,6 +589,11 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         customers: customers || [],
         serviceCategories: serviceCategories || [],
         items: initialState.initialItems || [],
+        // When editing, stock already taken by this order is given back on save, so count it as available.
+        originalItemQty: (initialState.isEditing ? (initialState.initialItems || []) : []).reduce((map, item) => {
+            if (item.type !== 'preset') map[String(item.id)] = (map[String(item.id)] || 0) + Number(item.quantity || 0);
+            return map;
+        }, {}),
         paymentType: initialState.paymentType || 'unpaid',
         sendSms: false,
         discount: Number(initialState.discount || 0),
@@ -812,11 +847,18 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             return this.filteredPresets.length + this.filteredServices.length;
         },
         add(service) {
+            if (this.isAddOn(service) && this.addOnRemaining(service) <= 0) {
+                Swal.fire({ title: 'Out of stock', text: `${service.name} has no stock left in inventory. Restock it in Inventory first.`, icon: 'warning', confirmButtonColor: '#dc2626' });
+                return;
+            }
             const existing = this.items.find(item => item.type !== 'preset' && String(item.id) === String(service.id));
             if (existing) {
                 existing.quantity = Number(existing.quantity) + 1;
             } else {
                 this.items.push({ type: 'service', id: service.id, name: service.name, quantity: 1, price: Number(service.price) });
+                if (this.isFabconBase(service)) {
+                    this.promptFabcon(service.name);
+                }
             }
             this.$nextTick(() => this.refreshIcons());
         },
@@ -833,8 +875,55 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
                     quantity: 1,
                     price: this.presetTotal(preset),
                 });
+                const fabcon = preset.items.find(item => this.isFabconBase(item));
+                if (fabcon) {
+                    this.promptFabcon(`${preset.name} (${fabcon.name})`);
+                }
             }
             this.$nextTick(() => this.refreshIcons());
+        },
+        // Add Ons are inventory products (Ariel, Downy, ...) sold in Job Orders; stock comes from Inventory.
+        isAddOn(service) {
+            const full = this.services.find(s => String(s.id) === String(service.id)) || service;
+            return Boolean(full.is_add_on);
+        },
+        // Stock left for an add-on after what is already in the cart.
+        addOnRemaining(service) {
+            const full = this.services.find(s => String(s.id) === String(service.id)) || service;
+            if (!full.is_add_on || full.stock === null || full.stock === undefined) {
+                return Infinity;
+            }
+            const inCart = this.items
+                .filter(item => item.type !== 'preset' && String(item.id) === String(full.id))
+                .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+            return Number(full.stock) + Number(this.originalItemQty[String(full.id)] || 0) - inCart;
+        },
+        stockLabel(service) {
+            const left = this.addOnRemaining(service);
+            if (left === Infinity) return '';
+            return left <= 0 ? 'Out of stock' : `${this.money(left).replace(/\.00$/, '')} ${service.stock_unit || 'pcs'} left`;
+        },
+        // Base fabcon items such as "Fabcon 70ml" / "Fabcon 100ml" trigger the add-on popup.
+        isFabconBase(service) {
+            const full = this.services.find(s => String(s.id) === String(service.id)) || service;
+            return !this.isAddOn(full) && String(full.name || '').toLowerCase().includes('fabcon');
+        },
+        get fabconAddOns() {
+            return this.availableServices.filter(service => this.isAddOn(service) && String(service.report_category) === 'fabcon');
+        },
+        fabconPrompt: { open: false, source: '' },
+        promptFabcon(source) {
+            if (this.fabconAddOns.length === 0) {
+                return;
+            }
+            this.fabconPrompt = { open: true, source };
+            this.refreshIcons();
+        },
+        chooseFabcon(addOn) {
+            this.fabconPrompt = { open: false, source: '' };
+            if (addOn) {
+                this.add(addOn);
+            }
         },
         presetTotal(preset) {
             return preset.items.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.price || 0)), 0);

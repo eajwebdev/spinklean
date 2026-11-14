@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class InventoryMovement extends Model
 {
-    protected $fillable = ['inventory_id', 'user_id', 'movement_type', 'quantity', 'remarks'];
+    protected $fillable = ['inventory_id', 'user_id', 'cycle_record_id', 'movement_type', 'quantity', 'remarks'];
 
     protected $casts = ['quantity' => 'decimal:2'];
 

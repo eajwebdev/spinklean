@@ -137,7 +137,8 @@ class JobOrderController extends Controller
         $services = LaundryService::where('is_active', true)
             ->when(! in_array($user->role, ['super_admin', 'admin'], true), fn ($q) => $q->where('branch_id', $user->branch_id))
             ->orderBy('name')
-            ->get(['id', 'branch_id', 'name', 'service_category_id', 'pricing_type', 'price']);
+            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'pricing_type', 'price']);
+        $services = $this->servicesForPos($services);
 
         $serviceCategories = LaundryServiceCategory::where('is_active', true)
             ->orderBy('sort_order')
@@ -204,7 +205,8 @@ class JobOrderController extends Controller
                 ->where('is_active', true)
                 ->orWhereIn('id', $serviceIds))
             ->orderBy('name')
-            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'pricing_type', 'price']);
+            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'pricing_type', 'price']);
+        $services = $this->servicesForPos($services);
 
         $branches = Branch::query()
             ->whereKey($branchId)
@@ -1264,6 +1266,31 @@ class JobOrderController extends Controller
 
                 $ledger->update(['running_balance' => $runningBalance]);
             });
+    }
+
+    /**
+     * POS service list. Add Ons carry their inventory stock so the cashier sees
+     * what is left and cannot pick a product that is out of stock.
+     */
+    private function servicesForPos($services)
+    {
+        $services->load('addOnInventory:id,quantity,unit,reorder_level');
+
+        return $services->map(fn (LaundryService $service) => [
+            'id' => $service->id,
+            'branch_id' => $service->branch_id,
+            'name' => $service->name,
+            'service_category_id' => $service->service_category_id,
+            'report_category' => $service->report_category,
+            'pricing_type' => $service->pricing_type,
+            'price' => $service->price,
+            'is_add_on' => $service->isAddOn(),
+            'stock' => $service->addOnInventory ? (float) $service->addOnInventory->quantity : null,
+            'stock_unit' => $service->addOnInventory?->unit,
+            'low_stock' => $service->addOnInventory
+                ? (float) $service->addOnInventory->quantity <= (float) $service->addOnInventory->reorder_level
+                : false,
+        ])->values();
     }
 
     private function productionInventoryForUsage(JobOrder $order, $usage): Inventory

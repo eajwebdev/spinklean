@@ -100,6 +100,7 @@ class DefaultLaundryServices
         $names = array_column(self::all(), 'name');
 
         LaundryService::where('branch_id', $branch->id)
+            ->whereNull('add_on_inventory_id') // Add Ons are managed from Inventory (see InventoryAddOns).
             ->whereNotIn('name', $names)
             ->delete();
 

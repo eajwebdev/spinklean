@@ -8,6 +8,7 @@ use App\Models\Inventory;
 use App\Models\InventoryMovement;
 use App\Models\Supplier;
 use App\Support\Activity;
+use App\Support\InventoryAddOns;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
@@ -99,9 +100,11 @@ class InventoryController extends Controller
         $validated = $request->validate($this->inventoryRules());
         $validated = $this->normalizeBranch($request, $validated);
         $validated['is_active'] = $request->boolean('is_active', true);
+        $validated = $this->normalizeAddOn($request, $validated);
 
         DB::transaction(function () use ($request, $validated) {
             $item = Inventory::create($validated);
+            InventoryAddOns::sync($item);
 
             if ((float) $item->quantity > 0) {
                 $item->movements()->create([
@@ -128,8 +131,12 @@ class InventoryController extends Controller
         $validated = $request->validate($this->inventoryRules());
         $validated = $this->normalizeBranch($request, $validated);
         $validated['is_active'] = $request->boolean('is_active');
+        $validated = $this->normalizeAddOn($request, $validated);
 
-        $inventory->update($validated);
+        DB::transaction(function () use ($inventory, $validated) {
+            $inventory->update($validated);
+            InventoryAddOns::sync($inventory);
+        });
 
         Activity::log($request, 'inventory_updated', $inventory, [
             'name' => $inventory->name,
@@ -142,7 +149,10 @@ class InventoryController extends Controller
     public function destroy(Request $request, Inventory $inventory)
     {
         $this->authorizeInventory($request, $inventory);
-        $inventory->delete();
+        DB::transaction(function () use ($inventory) {
+            $inventory->delete();
+            InventoryAddOns::sync($inventory); // stop selling it as an add-on
+        });
 
         Activity::log($request, 'inventory_deleted', $inventory, [
             'name' => $inventory->name,
@@ -226,7 +236,22 @@ class InventoryController extends Controller
             'reorder_level' => ['required', 'numeric', 'min:0'],
             'unit_cost' => ['required', 'numeric', 'min:0'],
             'is_active' => ['nullable', 'boolean'],
+            'is_add_on' => ['nullable', 'boolean'],
+            'add_on_type' => ['nullable', 'required_if_accepted:is_add_on', Rule::in(array_keys(InventoryAddOns::TYPES))],
+            'selling_price' => ['nullable', 'required_if_accepted:is_add_on', 'numeric', 'min:0'],
         ];
+    }
+
+    private function normalizeAddOn(Request $request, array $validated): array
+    {
+        $validated['is_add_on'] = $request->boolean('is_add_on');
+
+        if (! $validated['is_add_on']) {
+            // Keep the last type / price so re-enabling the add-on restores them.
+            unset($validated['add_on_type'], $validated['selling_price']);
+        }
+
+        return $validated;
     }
 
     private function normalizeBranch(Request $request, array $validated): array

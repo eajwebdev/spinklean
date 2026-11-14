@@ -104,9 +104,34 @@
                                 </span>
                             </td>
                             <td class="px-4 py-3 text-right">
-                                <button type="button" @click="payOpen = {{ $order->id }}" title="Record payment" aria-label="Record payment" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
-                                    <span data-lucide="payments" class="h-4 w-4"></span>
-                                </button>
+                                <div class="inline-flex items-center gap-1">
+                                    <button type="button" @click="payOpen = {{ $order->id }}" title="Record payment" aria-label="Record payment" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
+                                        <span data-lucide="payments" class="h-4 w-4"></span>
+                                    </button>
+                                    @if(in_array($order->status, ['ready_for_pickup', 'ready_for_delivery'], true))
+                                        <form method="POST" action="{{ route('admin.receivables.release', $order) }}" class="inline">
+                                            @csrf
+                                            @method('PATCH')
+                                            @php($balanceNum = (float) $order->balance)
+                                            @php($unpaidLimit = (float) ($order->customer?->unpaid_limit ?? 0))
+                                            @if($balanceNum > $unpaidLimit)
+                                                <button
+                                                    type="button"
+                                                    x-on:click="Swal.fire({ title: 'Unpaid Balance!', text: @js('Cannot release laundry with unpaid balance of ₱'.number_format($balanceNum, 2).'. Payment must be collected first.'), icon: 'warning', confirmButtonColor: '#dc2626' })"
+                                                    title="Unpaid balance must be collected before release"
+                                                    aria-label="Release blocked by unpaid balance"
+                                                    class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-amber-300 text-amber-600 opacity-80 hover:bg-amber-50 dark:border-amber-900/60 dark:text-amber-400"
+                                                >
+                                                    <span data-lucide="package-check" class="h-4 w-4"></span>
+                                                </button>
+                                            @else
+                                                <button type="submit" x-on:click.prevent="Swal.fire({ title: 'Complete laundry?', text: @js('Release '.$order->job_order_number.' with a remaining balance of ₱'.number_format($balanceNum, 2).' (within the customer\'s unpaid limit). This will mark the job order as completed.'), icon: 'warning', showCancelButton: true, confirmButtonColor: '#0f766e', confirmButtonText: 'Complete' }).then((result) => { if (result.isConfirmed) $el.closest('form').submit(); })" title="Release job order to customer" aria-label="Release job order to customer" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-teal-200 text-teal-700 hover:bg-teal-50 dark:border-teal-900/60 dark:text-teal-300 dark:hover:bg-teal-500/10">
+                                                    <span data-lucide="package-check" class="h-4 w-4"></span>
+                                                </button>
+                                            @endif
+                                        </form>
+                                    @endif
+                                </div>
                             </td>
                         </tr>
                     @empty

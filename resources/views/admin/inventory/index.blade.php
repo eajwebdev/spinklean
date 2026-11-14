@@ -96,6 +96,11 @@
                             <td class="px-4 py-3">
                                 <p class="font-medium">{{ $item->name }}</p>
                                 <p class="text-xs text-muted">{{ $item->sku ?: 'No SKU' }} - {{ $item->branch?->name }}</p>
+                                @if($item->is_add_on)
+                                    <span class="mt-1 inline-flex items-center gap-1 rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                                        Add-On · {{ \App\Support\InventoryAddOns::TYPES[$item->add_on_type] ?? 'Other' }} · {{ $appSettings?->currency ?? 'PHP' }} {{ number_format((float) $item->selling_price, 2) }}
+                                    </span>
+                                @endif
                             </td>
                             <td class="px-4 py-3">{{ $item->supplier?->name ?? 'N/A' }}</td>
                             <td class="px-4 py-3">

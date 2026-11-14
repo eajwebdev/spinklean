@@ -359,16 +359,59 @@
                     </div>
 
                     <div class="mb-3 grid grid-cols-4 gap-1">
-                        @foreach(['fold' => $cycleTypes['fold'], 'iron' => $cycleTypes['iron']] as $type => $label)
-                            <form method="POST" action="{{ route('admin.cycles.store', $order) }}">
-                                @csrf
-                                <input type="hidden" name="cycle_type" value="{{ $type }}">
-                                <button type="submit" title="Start {{ $label }}" class="inline-flex h-9 w-full items-center justify-center gap-1 rounded-md bg-primary px-1 text-[11px] font-medium text-white hover:opacity-90">
-                                    <span data-lucide="plus" class="h-3 w-3"></span>
-                                    {{ $label }}
-                                </button>
-                            </form>
-                        @endforeach
+                        <form method="POST" action="{{ route('admin.cycles.store', $order) }}">
+                            @csrf
+                            <input type="hidden" name="cycle_type" value="fold">
+                            <button type="submit" title="Start {{ $cycleTypes['fold'] }}" class="inline-flex h-9 w-full items-center justify-center gap-1 rounded-md bg-primary px-1 text-[11px] font-medium text-white hover:opacity-90">
+                                <span data-lucide="plus" class="h-3 w-3"></span>
+                                {{ $cycleTypes['fold'] }}
+                            </button>
+                        </form>
+
+                        {{-- Ironing asks which plastics were used (e.g. 1 Small + 1 Packaging) and deducts them from inventory. --}}
+                        @php($plastics = $plasticsByBranch[$processingBranchId] ?? [])
+                        <form method="POST" action="{{ route('admin.cycles.store', $order) }}" x-data="{ open: false }">
+                            @csrf
+                            <input type="hidden" name="cycle_type" value="iron">
+                            <button type="button" @click="open = true; $nextTick(() => window.renderLucideIcons && window.renderLucideIcons())" title="Start {{ $cycleTypes['iron'] }}" class="inline-flex h-9 w-full items-center justify-center gap-1 rounded-md bg-primary px-1 text-[11px] font-medium text-white hover:opacity-90">
+                                <span data-lucide="plus" class="h-3 w-3"></span>
+                                {{ $cycleTypes['iron'] }}
+                            </button>
+
+                            <div x-cloak x-show="open" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" @keydown.escape.window="open = false">
+                                <div @click.outside="open = false" class="w-full max-w-sm rounded-lg bg-white p-5 text-left shadow-2xl dark:bg-gray-900">
+                                    <div class="mb-1 flex items-center justify-between">
+                                        <h2 class="inline-flex items-center gap-2 text-lg font-semibold"><span data-lucide="package" class="h-4 w-4 text-primary"></span>Plastic Used</h2>
+                                        <button type="button" @click="open = false" class="rounded-md p-2 hover:bg-smoke dark:hover:bg-gray-800"><span data-lucide="x" class="h-4 w-4"></span></button>
+                                    </div>
+                                    <p class="mb-4 text-xs text-muted">{{ $order->job_order_number }} · Enter how many of each plastic you used. They are deducted from {{ $processingBranch?->name }} inventory.</p>
+
+                                    <div class="space-y-2">
+                                        @forelse($plastics as $plastic)
+                                            <label class="flex items-center justify-between gap-3 rounded-md border border-border p-2.5 dark:border-gray-800">
+                                                <span class="min-w-0">
+                                                    <span class="block text-sm font-medium">{{ $plastic['label'] }}</span>
+                                                    <span class="block text-[11px] {{ $plastic['quantity'] <= 0 ? 'text-red-600' : 'text-muted' }}">
+                                                        {{ $plastic['quantity'] <= 0 ? 'Out of stock' : rtrim(rtrim(number_format($plastic['quantity'], 2), '0'), '.').' '.$plastic['unit'].' left' }}
+                                                    </span>
+                                                </span>
+                                                <input type="number" name="plastics[{{ $plastic['id'] }}]" value="0" min="0" max="{{ (int) floor($plastic['quantity']) }}" step="1" @disabled($plastic['quantity'] <= 0) class="h-9 w-20 rounded-md border border-border bg-white px-2 text-center text-sm disabled:opacity-50 dark:border-gray-700 dark:bg-gray-950">
+                                            </label>
+                                        @empty
+                                            <p class="rounded-md border border-dashed border-border p-3 text-center text-xs text-muted dark:border-gray-800">No plastic items in this branch inventory. Ironing will start without deducting plastic.</p>
+                                        @endforelse
+                                    </div>
+
+                                    <div class="mt-4 flex justify-end gap-2">
+                                        <button type="button" @click="open = false" class="h-9 rounded-md border border-border px-4 text-sm font-medium hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">Cancel</button>
+                                        <button type="submit" class="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">
+                                            <span data-lucide="plus" class="h-4 w-4"></span>
+                                            Start Ironing
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </form>
                         @if($mustReturnToDropoff)
                             <form method="POST" action="{{ route('admin.cycles.release', $order) }}" class="col-span-2" x-data>
                                 @csrf
@@ -521,6 +564,9 @@
                                     @if($cycle->ended_at) - {{ $cycle->ended_at->format('h:i A') }} @endif
                                 </p>
                                 <p class="truncate text-[11px] text-muted">{{ $cycle->user?->name ?? 'System user' }}</p>
+                                @if($cycle->cycle_type === 'iron' && $cycle->notes)
+                                    <p class="truncate text-[11px] font-medium text-primary" title="{{ $cycle->notes }}">{{ $cycle->notes }}</p>
+                                @endif
                             </div>
 
                             <div class="flex items-center gap-1">
