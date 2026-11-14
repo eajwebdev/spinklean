@@ -371,7 +371,7 @@ class DashboardController extends Controller
     {
         $from = Carbon::parse($dateFrom);
         $to = Carbon::parse($dateTo);
-        $days = $from->diffInDays($to) + 1;
+        $days = (int) round(abs($from->diffInDays($to))) + 1;
         $previousTo = $from->copy()->subDay();
         $previousFrom = $previousTo->copy()->subDays($days - 1);
 
@@ -477,6 +477,11 @@ class DashboardController extends Controller
         return [
             'period' => [
                 'label' => $label,
+                'dates' => $dateFrom === $dateTo
+                    ? $from->format('D, M d, Y')
+                    : ($from->year === $to->year
+                        ? $from->format('M d').' – '.$to->format('M d, Y')
+                        : $from->format('M d, Y').' – '.$to->format('M d, Y')),
                 'is_today' => $dateFrom === $dateTo && $dateFrom === $today,
                 'is_single_day' => $dateFrom === $dateTo,
                 'range' => $dateFrom.' to '.$dateTo,

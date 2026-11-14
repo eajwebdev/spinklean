@@ -69,6 +69,88 @@
 @endphp
 
 @section('content')
+<style>
+    /* Scoped dashboard styles. Kept inline so the page renders correctly even when
+       the compiled Tailwind bundle (public/build) is older than this view. */
+    .dash-hero { background:#fff; border:1px solid #e2e8f0; border-radius:.75rem; box-shadow:0 1px 2px rgb(15 23 42 / .05); overflow:hidden; }
+    .dash-hero-top { display:flex; flex-direction:column; gap:1rem; padding:1.25rem; }
+    .dash-hero-title h1 { margin:.5rem 0 0; font-size:1.375rem; line-height:1.3; font-weight:700; color:#0f172a; letter-spacing:-.01em; }
+    .dash-hero-title p { margin:.125rem 0 0; font-size:.875rem; color:#64748b; }
+    .dash-eyebrow { display:inline-flex; align-items:center; gap:.375rem; padding:.25rem .625rem; border-radius:999px; font-size:.6875rem; font-weight:600; text-transform:uppercase; letter-spacing:.04em; color:var(--color-primary); background:color-mix(in srgb, var(--color-primary) 10%, transparent); }
+    .dash-icon-xs { width:.875rem; height:.875rem; }
+    .dash-icon-sm { width:1rem; height:1rem; flex-shrink:0; }
+    .dash-inline { display:inline-flex; }
+
+    .dash-toolbar { display:grid; grid-template-columns:1fr; gap:.5rem; }
+    .dash-field { display:flex; align-items:center; gap:.5rem; height:2.5rem; padding:0 .75rem; border:1px solid #e2e8f0; border-radius:.5rem; background:#fff; color:#64748b; transition:border-color .15s, box-shadow .15s; }
+    .dash-field:focus-within { border-color:var(--color-primary); box-shadow:0 0 0 3px color-mix(in srgb, var(--color-primary) 18%, transparent); }
+    .dash-field select, .dash-field input { flex:1; min-width:0; height:100%; border:0; outline:0; background:transparent; font-size:.875rem; color:#0f172a; cursor:pointer; }
+    .dash-btn { display:inline-flex; align-items:center; justify-content:center; gap:.5rem; height:2.5rem; padding:0 1rem; border-radius:.5rem; font-size:.875rem; font-weight:600; border:1px solid transparent; transition:opacity .15s, background .15s; cursor:pointer; }
+    .dash-btn-primary { background:var(--color-primary); color:#fff; }
+    .dash-btn-primary:hover { opacity:.9; }
+    .dash-btn-icon { width:2.5rem; padding:0; border-color:#e2e8f0; background:#fff; color:#475569; }
+    .dash-btn-icon:hover { background:#f8fafc; }
+    .dash-btn:disabled { opacity:.6; cursor:wait; }
+    .dash-spin { animation:dash-spin 1s linear infinite; }
+    @keyframes dash-spin { to { transform:rotate(360deg); } }
+
+    .dash-hero-bottom { display:flex; flex-direction:column; gap:.75rem; padding:.75rem 1.25rem; border-top:1px solid #f1f5f9; background:#f8fafc; }
+    .dash-presets { display:flex; flex-wrap:wrap; gap:.375rem; }
+    .dash-preset { height:2rem; padding:0 .875rem; border-radius:999px; border:1px solid #e2e8f0; background:#fff; font-size:.8125rem; font-weight:500; color:#475569; cursor:pointer; transition:all .15s; }
+    .dash-preset:hover { border-color:#cbd5e1; color:#0f172a; }
+    .dash-preset.is-active { background:var(--color-primary); border-color:var(--color-primary); color:#fff; box-shadow:0 1px 2px rgb(15 23 42 / .12); }
+    .dash-status { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem 1rem; font-size:.8125rem; color:#64748b; }
+    .dash-period { display:inline-flex; align-items:baseline; gap:.375rem; }
+    .dash-period-label { font-weight:700; color:#0f172a; }
+    .dash-live { display:inline-flex; align-items:center; gap:.375rem; }
+    .dash-dot { width:.5rem; height:.5rem; border-radius:999px; background:#10b981; box-shadow:0 0 0 3px rgb(16 185 129 / .18); }
+    .dash-live.is-loading .dash-dot { background:#f59e0b; box-shadow:0 0 0 3px rgb(245 158 11 / .2); }
+    .dash-live.is-error { color:#dc2626; }
+    .dash-live.is-error .dash-dot { background:#ef4444; box-shadow:0 0 0 3px rgb(239 68 68 / .2); }
+
+    .dash-tabs { display:flex; gap:.25rem; overflow-x:auto; padding:.25rem; border:1px solid #e2e8f0; border-radius:.75rem; background:#fff; box-shadow:0 1px 2px rgb(15 23 42 / .05); scrollbar-width:none; }
+    .dash-tabs::-webkit-scrollbar { display:none; }
+    .dash-tab { flex:1 0 auto; display:inline-flex; align-items:center; justify-content:center; gap:.5rem; padding:.625rem 1rem; border-radius:.5rem; font-size:.875rem; font-weight:500; color:#64748b; white-space:nowrap; cursor:pointer; transition:all .15s; }
+    .dash-tab:hover { background:#f8fafc; color:#0f172a; }
+    .dash-tab.is-active { background:var(--color-primary); color:#fff; box-shadow:0 1px 3px rgb(15 23 42 / .15); }
+
+    .dash-sales-card { background:linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 9%, #fff), #fff 60%); }
+
+    @media (min-width:40rem) {
+        .dash-toolbar { grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto auto; }
+        .dash-toolbar:not(:has(.dash-field-branch)) { grid-template-columns:minmax(0,1fr) auto auto; }
+        .dash-hero-bottom { flex-direction:row; align-items:center; justify-content:space-between; }
+    }
+    @media (min-width:64rem) {
+        .dash-hero-top { flex-direction:row; align-items:center; justify-content:space-between; }
+        .dash-toolbar { grid-template-columns:13rem 15rem auto auto; }
+        .dash-toolbar:not(:has(.dash-field-branch)) { grid-template-columns:15rem auto auto; }
+    }
+
+    .dark .dash-hero, .dark .dash-tabs { background:#111827; border-color:#1f2937; }
+    .dark .dash-hero-title h1, .dark .dash-period-label { color:#f3f4f6; }
+    .dark .dash-hero-bottom { background:#0b1120; border-color:#1f2937; }
+    .dark .dash-field, .dark .dash-btn-icon, .dark .dash-preset { background:#030712; border-color:#1f2937; color:#9ca3af; }
+    .dark .dash-field select, .dark .dash-field input { color:#f3f4f6; }
+    .dark .dash-preset:hover, .dark .dash-tab:hover, .dark .dash-btn-icon:hover { background:#030712; color:#f3f4f6; }
+    .dark .dash-preset.is-active, .dark .dash-tab.is-active { background:var(--color-primary); border-color:var(--color-primary); color:#fff; }
+    .dark .dash-sales-card { background:linear-gradient(135deg, color-mix(in srgb, var(--color-primary) 14%, #111827), #111827 60%); }
+
+    /* Fallbacks for utilities this page uses that may be missing from an older build. */
+    .h-48 { height:12rem; } .h-52 { height:13rem; } .h-56 { height:14rem; }
+    .text-3xl { font-size:1.875rem; line-height:2.25rem; }
+    .dark .dark\:bg-emerald-950\/40 { background-color:rgb(2 44 34 / .4); }
+    .dark .dark\:bg-sky-950\/40 { background-color:rgb(8 47 73 / .4); }
+    @media (min-width:64rem) {
+        .lg\:grid-cols-\[minmax\(0\,1\.1fr\)_minmax\(0\,2fr\)\] { grid-template-columns:minmax(0,1.1fr) minmax(0,2fr); }
+    }
+    @media (min-width:80rem) {
+        .xl\:col-span-2 { grid-column:span 2 / span 2; }
+        .xl\:grid-cols-\[minmax\(0\,1\.4fr\)_minmax\(20rem\,0\.9fr\)\] { grid-template-columns:minmax(0,1.4fr) minmax(20rem,.9fr); }
+        .xl\:grid-cols-\[minmax\(0\,1\.6fr\)_minmax\(18rem\,0\.9fr\)\] { grid-template-columns:minmax(0,1.6fr) minmax(18rem,.9fr); }
+        .xl\:grid-cols-\[minmax\(0\,1fr\)_minmax\(0\,1\.3fr\)\] { grid-template-columns:minmax(0,1fr) minmax(0,1.3fr); }
+    }
+</style>
 <div
     x-data="dashboardPage({
         fetchUrl: @js(route('dashboard.data', request()->except('tab'))),
@@ -80,96 +162,85 @@
     })"
     class="space-y-4"
 >
-    {{-- Header + filters --}}
-    <div class="{{ $panel }} space-y-3">
-        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-            <div>
-                <div class="mb-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-smoke px-2.5 py-1 text-xs font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
-                    <span data-lucide="dashboard" class="h-3.5 w-3.5"></span>
+    {{-- Header + filters (styled by the scoped dash-* rules at the bottom, so it never depends on the compiled CSS) --}}
+    <header class="dash-hero">
+        <div class="dash-hero-top">
+            <div class="dash-hero-title">
+                <span class="dash-eyebrow">
+                    <span data-lucide="dashboard" class="dash-icon-xs"></span>
                     {{ $canChooseBranch ? 'Executive overview' : 'Branch command center' }}
-                </div>
-                <h1 class="text-xl font-semibold tracking-normal">
-                    {{ $canChooseBranch ? 'Business Dashboard' : $user->branch?->name.' Dashboard' }}
-                </h1>
-                <p class="flex flex-wrap items-center gap-x-2 text-sm text-muted">
-                    <span>Showing <strong class="text-gray-900 dark:text-gray-100" x-text="data.period.label"></strong></span>
-                    <span aria-hidden="true">·</span>
-                    <span class="inline-flex items-center gap-1.5">
-                        <span class="h-2 w-2 rounded-full" :class="status === 'error' ? 'bg-red-500' : (status === 'loading' ? 'bg-amber-400' : 'bg-emerald-500')"></span>
-                        <span x-show="status !== 'error'" x-text="`Updated ${data.generated_at}`"></span>
-                        <span x-show="status === 'error'" x-cloak class="text-red-600 dark:text-red-400">Couldn't refresh — showing last data. Retrying…</span>
-                    </span>
-                </p>
+                </span>
+                <h1>{{ $canChooseBranch ? 'Business Dashboard' : $user->branch?->name.' Dashboard' }}</h1>
+                <p>Sales, deductions, cash and operations in one place.</p>
             </div>
 
-            <form x-ref="filterForm" method="GET" action="{{ route('dashboard') }}" class="grid grid-cols-1 gap-2 sm:grid-cols-[12rem_16rem_auto_auto]">
+            <form x-ref="filterForm" method="GET" action="{{ route('dashboard') }}" class="dash-toolbar">
                 <input type="hidden" name="tab" :value="tab">
                 @if($canChooseBranch)
-                    <select name="branch_id" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950" @change="$refs.filterForm.submit()">
-                        <option value="">All branches</option>
-                        @foreach($branches as $branch)
-                            <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
-                        @endforeach
-                    </select>
+                    <label class="dash-field dash-field-branch">
+                        <span data-lucide="branches" class="dash-icon-sm"></span>
+                        <select name="branch_id" @change="$refs.filterForm.submit()" aria-label="Branch">
+                            <option value="">All branches</option>
+                            @foreach($branches as $branch)
+                                <option value="{{ $branch->id }}" @selected((int) $selectedBranchId === (int) $branch->id)>{{ $branch->name }}</option>
+                            @endforeach
+                        </select>
+                    </label>
                 @else
                     <input type="hidden" name="branch_id" value="{{ $user->branch_id }}">
                 @endif
 
-                <div class="flex h-9 items-center gap-2 rounded-md border border-border bg-white px-3 dark:border-gray-800 dark:bg-gray-950">
-                    <span data-lucide="calendar" class="h-4 w-4 text-muted"></span>
-                    <input x-ref="dateRange" x-model="dateRange" name="date_range" type="text" class="w-full bg-transparent text-sm outline-none" autocomplete="off" aria-label="Date range">
-                </div>
+                <label class="dash-field dash-field-date">
+                    <span data-lucide="calendar" class="dash-icon-sm"></span>
+                    <input x-ref="dateRange" x-model="dateRange" name="date_range" type="text" autocomplete="off" aria-label="Date range" placeholder="Pick dates">
+                </label>
 
-                <button class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
-                    <span data-lucide="search" class="h-4 w-4"></span>
+                <button type="submit" class="dash-btn dash-btn-primary">
+                    <span data-lucide="search" class="dash-icon-sm"></span>
                     Apply
                 </button>
 
-                <button type="button" @click="refresh(true)" :disabled="status === 'loading'" class="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-border px-3 text-sm hover:bg-smoke disabled:opacity-60 dark:border-gray-800 dark:hover:bg-gray-950" title="Refresh now">
-                    <span :class="status === 'loading' ? 'animate-spin' : ''" class="inline-flex"><span data-lucide="refresh-cw" class="h-4 w-4"></span></span>
-                    <span class="sm:hidden">Refresh</span>
+                <button type="button" @click="refresh(true)" :disabled="status === 'loading'" class="dash-btn dash-btn-icon" title="Refresh now" aria-label="Refresh now">
+                    <span :class="status === 'loading' ? 'dash-spin' : ''" class="dash-inline"><span data-lucide="refresh-cw" class="dash-icon-sm"></span></span>
                 </button>
             </form>
         </div>
 
-        <div class="flex flex-wrap gap-2">
-            <template x-for="preset in presets" :key="preset.key">
-                <button
-                    type="button"
-                    @click="applyPreset(preset)"
-                    class="h-8 rounded-full border px-3 text-xs font-medium transition"
-                    :class="activePreset === preset.key
-                        ? 'border-primary bg-primary text-white'
-                        : 'border-border text-muted hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950'"
-                    x-text="preset.label"
-                ></button>
-            </template>
+        <div class="dash-hero-bottom">
+            <div class="dash-presets" role="group" aria-label="Quick date ranges">
+                <template x-for="preset in presets" :key="preset.key">
+                    <button type="button" @click="applyPreset(preset)" class="dash-preset" :class="activePreset === preset.key ? 'is-active' : ''" x-text="preset.label"></button>
+                </template>
+            </div>
+
+            <div class="dash-status">
+                <span class="dash-period">
+                    <span class="dash-period-label" x-text="data.period.label"></span>
+                    <span class="dash-period-dates" x-show="data.period.dates !== data.period.label" x-text="data.period.dates"></span>
+                </span>
+                <span class="dash-live" :class="'is-' + status">
+                    <span class="dash-dot"></span>
+                    <span x-show="status !== 'error'" x-text="status === 'loading' ? 'Refreshing…' : `Updated ${data.generated_at}`"></span>
+                    <span x-show="status === 'error'" x-cloak>Couldn't refresh. Retrying…</span>
+                </span>
+            </div>
         </div>
-    </div>
+    </header>
 
     {{-- Tabs --}}
-    <div class="-mx-1 overflow-x-auto px-1">
-        <nav class="inline-flex min-w-full gap-1 rounded-lg border border-border bg-white p-1 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:min-w-0" role="tablist">
-            @foreach($tabs as $key => $tabItem)
-                <button
-                    type="button"
-                    role="tab"
-                    :aria-selected="tab === '{{ $key }}'"
-                    @click="setTab('{{ $key }}')"
-                    class="inline-flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition"
-                    :class="tab === '{{ $key }}' ? 'bg-primary text-white shadow-sm' : 'text-muted hover:bg-smoke dark:hover:bg-gray-950'"
-                >
-                    <span data-lucide="{{ $tabItem['icon'] }}" class="h-4 w-4"></span>
-                    {{ $tabItem['label'] }}
-                </button>
-            @endforeach
-        </nav>
-    </div>
+    <nav class="dash-tabs" role="tablist" aria-label="Dashboard sections">
+        @foreach($tabs as $key => $tabItem)
+            <button type="button" role="tab" :aria-selected="tab === '{{ $key }}'" @click="setTab('{{ $key }}')" class="dash-tab" :class="tab === '{{ $key }}' ? 'is-active' : ''">
+                <span data-lucide="{{ $tabItem['icon'] }}" class="dash-icon-sm"></span>
+                <span>{{ $tabItem['label'] }}</span>
+            </button>
+        @endforeach
+    </nav>
 
     {{-- ============ OVERVIEW ============ --}}
     <section x-show="tab === 'overview'" class="space-y-4" role="tabpanel">
         <div class="grid gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,2fr)]">
-            <div class="{{ $panel }} flex flex-col justify-between bg-gradient-to-br from-white to-smoke dark:from-gray-900 dark:to-gray-950">
+            <div class="{{ $panel }} dash-sales-card flex flex-col justify-between">
                 <div class="flex items-center justify-between">
                     <p class="text-sm font-medium text-muted" x-text="`Sales ${data.period.label}`"></p>
                     <span data-lucide="payments" class="h-5 w-5 text-primary"></span>
