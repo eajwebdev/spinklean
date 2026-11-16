@@ -1163,7 +1163,7 @@ class JobOrderController extends Controller
             }
 
             foreach ($service->inventoryUsages as $usage) {
-                $inventory = $this->productionInventoryForUsage($order, $usage);
+                $inventory = $this->productionInventoryForUsage($order, $usage, $service);
 
                 $deductions[$inventory->id] = ($deductions[$inventory->id] ?? 0)
                     + ((float) $usage->quantity * (float) $item['quantity']);
@@ -1175,9 +1175,14 @@ class JobOrderController extends Controller
                 continue;
             }
 
+            // Stock can come from the production branch, or from the drop-off
+            // branch when the item is sent along with the laundry (e.g. Add Ons).
             $inventory = Inventory::query()
                 ->whereKey($inventoryId)
-                ->where('branch_id', $order->processing_branch_id ?: $order->branch_id)
+                ->whereIn('branch_id', array_unique([
+                    (int) ($order->processing_branch_id ?: $order->branch_id),
+                    (int) $order->branch_id,
+                ]))
                 ->lockForUpdate()
                 ->first();
 
@@ -1293,7 +1298,17 @@ class JobOrderController extends Controller
         ])->values();
     }
 
-    private function productionInventoryForUsage(JobOrder $order, $usage): Inventory
+    /**
+     * Resolve which stock a service usage is deducted from.
+     *
+     * Machine branches: their own stock. No-machine (drop-off) branches:
+     * Add Ons (e.g. Downy) are sold at the drop-off counter and travel with
+     * the laundry to the production branch, so they come out of the drop-off
+     * branch's own stock. Other consumables use the production branch's
+     * matching stock, falling back to the drop-off branch's stock (sent along
+     * with the laundry) when the production branch does not carry the item.
+     */
+    private function productionInventoryForUsage(JobOrder $order, $usage, ?LaundryService $service = null): Inventory
     {
         $sourceInventory = $usage->inventory;
         $productionBranchId = (int) ($order->processing_branch_id ?: $order->branch_id);
@@ -1308,6 +1323,13 @@ class JobOrderController extends Controller
             ]);
         }
 
+        $sourceIsDropoffStock = $sourceInventory
+            && (int) $sourceInventory->branch_id === (int) $order->branch_id;
+
+        if ($sourceIsDropoffStock && $service?->isAddOn()) {
+            return $sourceInventory;
+        }
+
         $productionInventory = Inventory::query()
             ->where('branch_id', $productionBranchId)
             ->where('is_active', true)
@@ -1316,6 +1338,10 @@ class JobOrderController extends Controller
                 ->where('name', $sourceInventory?->name)
                 ->where('unit', $sourceInventory?->unit))
             ->first();
+
+        if (! $productionInventory && $sourceIsDropoffStock) {
+            return $sourceInventory;
+        }
 
         if (! $productionInventory) {
             throw ValidationException::withMessages([

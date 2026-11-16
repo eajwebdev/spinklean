@@ -2090,6 +2090,78 @@ class CycleMonitoringTest extends TestCase
         $this->assertNotNull($order->fresh()->inventory_deducted_at);
     }
 
+    public function test_pickup_dropoff_add_on_travels_with_laundry_and_deducts_from_dropoff_stock(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $dropoffBranch = $this->createBranch([
+            'name' => 'Pickup Branch',
+            'code' => 'DROP11',
+            'branch_type' => 'pickup_dropoff',
+            'machine_count' => 0,
+        ]);
+        $productionBranch = $this->createBranch([
+            'name' => 'Production Branch',
+            'code' => 'PROD11',
+            'branch_type' => 'full_service',
+            'machine_count' => 3,
+        ]);
+        // Downy is only stocked at the drop-off branch (production has none).
+        $downy = Inventory::query()->create([
+            'branch_id' => $dropoffBranch->id,
+            'name' => 'DOWNY PASSION 24ML',
+            'sku' => 'DOWNY-P24',
+            'unit' => 'pcs',
+            'quantity' => 10,
+            'reorder_level' => 2,
+            'is_active' => true,
+            'is_add_on' => true,
+            'add_on_type' => 'fabcon',
+            'selling_price' => 15,
+        ]);
+        $service = \App\Support\InventoryAddOns::sync($downy);
+        $customer = $this->createCustomer($dropoffBranch);
+        $manager = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['job_orders'],
+        ]);
+        $productionUser = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $productionBranch->id,
+            'access' => ['cycles'],
+        ]);
+
+        $this->actingAs($manager)
+            ->post(route('admin.job-orders.store'), [
+                'branch_id' => $dropoffBranch->id,
+                'processing_branch_id' => $productionBranch->id,
+                'customer_id' => $customer->id,
+                'items' => [[
+                    'laundry_service_id' => $service->id,
+                    'description' => $service->name,
+                    'quantity' => 2,
+                    'unit_price' => 15,
+                ]],
+                'discount' => 0,
+                'paid_amount' => 0,
+                'tag_number' => 'TAG-TEST-DOWNY',
+                'transaction_type' => 'walk_in',
+            ])
+            ->assertRedirect(route('admin.job-orders.index'));
+
+        $order = JobOrder::query()->where('customer_id', $customer->id)->firstOrFail();
+
+        $this->actingAs($productionUser)
+            ->get(route('admin.cycles.scan', $order))
+            ->assertSessionHasNoErrors()
+            ->assertRedirect(route('admin.cycles.index', ['search' => $order->job_order_number]));
+
+        $this->assertSame('8.00', $downy->fresh()->quantity);
+        $this->assertNotNull($order->fresh()->inventory_deducted_at);
+    }
+
     private function completeSystemSettings(): void
     {
         SystemSetting::query()->create([
