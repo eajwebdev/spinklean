@@ -151,7 +151,7 @@ class InventoryController extends Controller
         $this->authorizeInventory($request, $inventory);
         DB::transaction(function () use ($inventory) {
             $inventory->delete();
-            InventoryAddOns::sync($inventory); // stop selling it as an add-on
+            InventoryAddOns::sync($inventory); // stop selling it (Add Ons and Sell Products)
         });
 
         Activity::log($request, 'inventory_deleted', $inventory, [
@@ -237,20 +237,32 @@ class InventoryController extends Controller
             'unit_cost' => ['required', 'numeric', 'min:0'],
             'is_active' => ['nullable', 'boolean'],
             'is_add_on' => ['nullable', 'boolean'],
+            'is_for_sale' => ['nullable', 'boolean'],
             'add_on_type' => ['nullable', 'required_if_accepted:is_add_on', Rule::in(array_keys(InventoryAddOns::TYPES))],
-            'selling_price' => ['nullable', 'required_if_accepted:is_add_on', 'numeric', 'min:0'],
+            'selling_price' => [
+                'nullable',
+                Rule::requiredIf(fn () => request()->boolean('is_add_on') || request()->boolean('is_for_sale')),
+                'numeric',
+                'min:0',
+            ],
         ];
     }
 
     private function normalizeAddOn(Request $request, array $validated): array
     {
         $validated['is_add_on'] = $request->boolean('is_add_on');
+        $validated['is_for_sale'] = $request->boolean('is_for_sale');
 
         if (! $validated['is_add_on']) {
-            // Keep the last type / price so re-enabling the add-on restores them.
-            unset($validated['add_on_type'], $validated['selling_price']);
+            // Keep the last type so re-enabling the add-on restores it.
+            unset($validated['add_on_type']);
+        }
+
+        if (! $validated['is_add_on'] && ! $validated['is_for_sale']) {
+            // Keep the last price so re-enabling restores it.
+            unset($validated['selling_price']);
         } else {
-            // Add-ons are sold and deducted per piece, even when the name says "24ML".
+            // Products are sold and deducted per piece, even when the name says "24ML".
             $validated['unit'] = 'pcs';
         }
 

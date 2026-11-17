@@ -116,7 +116,8 @@ class InventoryAddOnTest extends TestCase
 
         $this->actingAs($this->manager)->get(route('admin.inventory.index'))
             ->assertOk()
-            ->assertSee('Sell as Add-On in Job Orders')
+            ->assertSee('Sell in Job Orders')
+            ->assertSee('Sell Product')
             ->assertSee('Add-On · Fabcon');
 
         // Shows in the Job Order POS with its stock.

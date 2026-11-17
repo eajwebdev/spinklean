@@ -57,7 +57,7 @@ class DefaultLaundryServices
             ['name' => 'Amuma',         'pricing_type' => 'piece', 'price' => 0, 'category' => 'Establishment', 'report_category' => 'other'],
             ['name' => 'Nailaholics',   'pricing_type' => 'load',  'price' => 0, 'category' => 'Establishment', 'report_category' => 'other'],
 
-            // Products for sale (sachets, bottles, ...) are inventory Add Ons, not services.
+            // Products for sale (sachets, bottles, ...) are tagged "Sell Product" in Inventory, not services.
         ];
     }
 
@@ -99,7 +99,8 @@ class DefaultLaundryServices
         $names = array_column(self::all(), 'name');
 
         LaundryService::where('branch_id', $branch->id)
-            ->whereNull('add_on_inventory_id') // Add Ons are managed from Inventory (see InventoryAddOns).
+            ->whereNull('add_on_inventory_id') // Add Ons / Sell Products are managed from Inventory (see InventoryAddOns).
+            ->whereNull('sale_inventory_id')
             ->whereNotIn('name', $names)
             ->delete();
 

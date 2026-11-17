@@ -64,15 +64,28 @@
             </label>
         </div>
 
-        <div x-data="{ addOn: @js((bool) old('is_add_on', $item->is_add_on)) }" class="rounded-lg border border-border p-3 dark:border-gray-800 md:col-span-2">
-            <label class="inline-flex items-center gap-2 text-sm font-medium">
-                <input type="checkbox" name="is_add_on" value="1" x-model="addOn" class="rounded border-border text-primary">
-                Sell as Add-On in Job Orders
-            </label>
-            <p class="mt-1 text-xs text-muted">Shows this product under "Add Ons" in Job Orders. Each one sold deducts 1 pc from this stock. Add-ons are always counted in pcs.</p>
+        <div x-data="{ addOn: @js((bool) old('is_add_on', $item->is_add_on)), forSale: @js((bool) old('is_for_sale', $item->is_for_sale)) }" class="rounded-lg border border-border p-3 dark:border-gray-800 md:col-span-2">
+            <p class="mb-2 text-sm font-medium">Sell in Job Orders</p>
+            <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <label class="flex items-start gap-2 rounded-md bg-smoke p-2 text-sm dark:bg-gray-950">
+                    <input type="checkbox" name="is_add_on" value="1" x-model="addOn" class="mt-0.5 rounded border-border text-primary">
+                    <span>
+                        <span class="block font-medium">Add-On</span>
+                        <span class="block text-xs text-muted">Shows under "Add Ons". Added to a laundry order (e.g. Downy for the wash).</span>
+                    </span>
+                </label>
+                <label class="flex items-start gap-2 rounded-md bg-smoke p-2 text-sm dark:bg-gray-950">
+                    <input type="checkbox" name="is_for_sale" value="1" x-model="forSale" class="mt-0.5 rounded border-border text-primary">
+                    <span>
+                        <span class="block font-medium">Sell Product</span>
+                        <span class="block text-xs text-muted">Shows under "Sell Products". Can be sold on its own: no laundry, no transfer.</span>
+                    </span>
+                </label>
+            </div>
+            <p class="mt-2 text-xs text-muted">Tick one or both. Both use this same stock: each one sold deducts 1 pc. Products are always counted in pcs.</p>
 
-            <div x-show="addOn" x-cloak class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
-                <div>
+            <div x-show="addOn || forSale" x-cloak class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div x-show="addOn">
                     <label class="mb-1.5 block text-sm font-medium">Add-On Type</label>
                     <select name="add_on_type" :required="addOn" :disabled="!addOn" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
                         @foreach(\App\Support\InventoryAddOns::TYPES as $typeKey => $typeLabel)
@@ -82,7 +95,7 @@
                 </div>
                 <div>
                     <label class="mb-1.5 block text-sm font-medium">Selling Price</label>
-                    <input type="number" step="0.01" min="0" name="selling_price" value="{{ old('selling_price', $item->selling_price) }}" :required="addOn" :disabled="!addOn" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    <input type="number" step="0.01" min="0" name="selling_price" value="{{ old('selling_price', $item->selling_price) }}" :required="addOn || forSale" :disabled="!addOn && !forSale" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
                 </div>
             </div>
         </div>

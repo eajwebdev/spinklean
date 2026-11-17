@@ -36,7 +36,8 @@ class LaundryServiceController extends Controller
 
         $services = LaundryService::with(['branch', 'inventoryUsages'])
             ->where('branch_id', $selectedBranchId)
-            ->whereNull('add_on_inventory_id') // Add Ons are managed in Inventory.
+            ->whereNull('add_on_inventory_id') // Add Ons and Sell Products are managed in Inventory.
+            ->whereNull('sale_inventory_id')
             ->when(in_array($request->pricing_type, self::PRICING_TYPES, true), fn ($query) => $query->where('pricing_type', $request->pricing_type))
             ->when(in_array($request->status, self::STATUS_FILTERS, true), fn ($query) => $query->where('is_active', $request->status === 'active'))
             ->when($request->filled('search'), fn ($query) => $query->where('name', 'like', "%{$request->search}%"))
@@ -216,9 +217,9 @@ class LaundryServiceController extends Controller
 
     private function guardAddOn(LaundryService $service): void
     {
-        if ($service->isAddOn()) {
+        if ($service->isInventoryProduct()) {
             throw ValidationException::withMessages([
-                'name' => "{$service->name} is an Add-On. Change its price, type or stock in Inventory.",
+                'name' => "{$service->name} is an inventory product (Add-On / Sell Product). Change its price, type or stock in Inventory.",
             ]);
         }
     }

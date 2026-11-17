@@ -295,7 +295,7 @@
                         </button>
                     </template>
                     <template x-for="service in filteredServices" :key="service.id">
-                        <button type="button" @click="add(service)" :class="isAddOn(service) && addOnRemaining(service) <= 0 ? 'opacity-50' : ''" class="group rounded-lg border border-border p-3 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm dark:border-gray-800 dark:hover:bg-gray-950">
+                        <button type="button" @click="add(service)" :class="isProduct(service) && addOnRemaining(service) <= 0 ? 'opacity-50' : ''" class="group rounded-lg border border-border p-3 text-left transition-all hover:border-primary hover:bg-primary/5 hover:shadow-sm dark:border-gray-800 dark:hover:bg-gray-950">
                             <div class="flex items-start justify-between gap-2">
                                 <div class="flex min-w-0 items-start gap-2.5">
                                     <span class="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary transition group-hover:scale-105">
@@ -304,7 +304,7 @@
                                     <div class="min-w-0">
                                         <p class="truncate text-sm font-medium" x-text="service.name"></p>
                                         <p class="mt-0.5 text-[10px] capitalize text-muted" x-text="service.pricing_type"></p>
-                                        <p x-show="isAddOn(service)" class="mt-0.5 text-[10px] font-semibold" :class="addOnRemaining(service) <= 0 ? 'text-red-600' : (service.low_stock ? 'text-amber-600' : 'text-green-700 dark:text-green-400')" x-text="stockLabel(service)"></p>
+                                        <p x-show="isProduct(service)" class="mt-0.5 text-[10px] font-semibold" :class="addOnRemaining(service) <= 0 ? 'text-red-600' : (service.low_stock ? 'text-amber-600' : 'text-green-700 dark:text-green-400')" x-text="stockLabel(service)"></p>
                                     </div>
                                 </div>
                                 <span class="shrink-0 rounded-md bg-primary/10 px-2 py-1 text-xs font-bold text-primary">
@@ -401,7 +401,7 @@
 
                     <!-- Save Button -->
                     <p x-cloak x-show="isProductSale && !isEditing" class="mt-3 rounded-md bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary">
-                        Products only: sold from this branch's stock and completed right away. No transfer or tag needed.
+                        Sell Products only: sold from this branch's stock and completed right away. No transfer or tag needed.
                     </p>
                     <button type="button" @click="openPaymentPanel()" :disabled="!canCheckout" class="mt-3 h-10 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
                         <span x-show="items.length === 0">Add items to continue</span>
@@ -629,7 +629,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             return Boolean(branch && (branch.branch_type === 'pickup_dropoff' || (branch.machine_count ?? 0) === 0));
         },
         productSaleLocked: Boolean(initialState.isProductSale),
-        // A cart holding only add-on products (Ariel, Downy, bottles, ...) is a product sale:
+        // A cart holding only "Sell Products" items is a product sale:
         // sold from this branch's stock, no processing branch, no tag, completed right away.
         get isProductSale() {
             if (this.isEditing) {
@@ -637,10 +637,10 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             }
             return this.items.length > 0 && this.items.every(item => {
                 if (item.type !== 'preset') {
-                    return this.isAddOn(item);
+                    return this.isSaleProduct(item);
                 }
                 const preset = this.servicePresets.find(p => String(p.id) === String(item.id));
-                return Boolean(preset && preset.items.length > 0 && preset.items.every(presetItem => this.isAddOn(presetItem)));
+                return Boolean(preset && preset.items.length > 0 && preset.items.every(presetItem => this.isSaleProduct(presetItem)));
             });
         },
         get isWalkInProductSale() {
@@ -902,7 +902,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             return this.filteredPresets.length + this.filteredServices.length;
         },
         add(service) {
-            if (this.isAddOn(service) && this.addOnRemaining(service) <= 0) {
+            if (this.isProduct(service) && this.addOnRemaining(service) <= 0) {
                 Swal.fire({ title: 'Out of stock', text: `${service.name} has no stock left in inventory. Restock it in Inventory first.`, icon: 'warning', confirmButtonColor: '#dc2626' });
                 return;
             }
@@ -937,21 +937,38 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             }
             this.$nextTick(() => this.refreshIcons());
         },
-        // Add Ons are inventory products (Ariel, Downy, ...) sold in Job Orders; stock comes from Inventory.
+        // Add Ons are inventory products (Ariel, Downy, ...) added to laundry orders.
         isAddOn(service) {
             const full = this.services.find(s => String(s.id) === String(service.id)) || service;
             return Boolean(full.is_add_on);
         },
-        // Stock left for an add-on after what is already in the cart.
+        // Sell Products can be sold on their own (product sale: no laundry, no transfer).
+        isSaleProduct(service) {
+            const full = this.services.find(s => String(s.id) === String(service.id)) || service;
+            return Boolean(full.is_sale_product);
+        },
+        // Any inventory product (Add On or Sell Product): stock comes from Inventory.
+        isProduct(service) {
+            return this.isAddOn(service) || this.isSaleProduct(service);
+        },
+        // Stock left for a product after what is already in the cart. An item tagged both
+        // Add-On and Sell Product shares one stock, so both of its cart lines count.
         addOnRemaining(service) {
             const full = this.services.find(s => String(s.id) === String(service.id)) || service;
-            if (!full.is_add_on || full.stock === null || full.stock === undefined) {
+            if (!this.isProduct(full) || full.stock === null || full.stock === undefined) {
                 return Infinity;
             }
+            const sharedIds = this.services
+                .filter(s => s.stock_inventory_id && String(s.stock_inventory_id) === String(full.stock_inventory_id))
+                .map(s => String(s.id));
+            if (!sharedIds.includes(String(full.id))) {
+                sharedIds.push(String(full.id));
+            }
             const inCart = this.items
-                .filter(item => item.type !== 'preset' && String(item.id) === String(full.id))
+                .filter(item => item.type !== 'preset' && sharedIds.includes(String(item.id)))
                 .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-            return Number(full.stock) + Number(this.originalItemQty[String(full.id)] || 0) - inCart;
+            const alreadyTaken = sharedIds.reduce((sum, id) => sum + Number(this.originalItemQty[id] || 0), 0);
+            return Number(full.stock) + alreadyTaken - inCart;
         },
         stockLabel(service) {
             const left = this.addOnRemaining(service);
@@ -961,7 +978,7 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
         // Base fabcon items such as "Fabcon 70ml" / "Fabcon 100ml" trigger the add-on popup.
         isFabconBase(service) {
             const full = this.services.find(s => String(s.id) === String(service.id)) || service;
-            return !this.isAddOn(full) && String(full.name || '').toLowerCase().includes('fabcon');
+            return !this.isProduct(full) && String(full.name || '').toLowerCase().includes('fabcon');
         },
         get fabconAddOns() {
             return this.availableServices.filter(service => this.isAddOn(service) && String(service.report_category) === 'fabcon');

@@ -9,6 +9,8 @@ use App\Models\LaundryServiceCategory;
 
 /**
  * Add Ons are inventory products (Ariel, Downy, ...) sold in Job Orders.
+ * An item can also (or instead) be tagged "Sell Product": it then shows under
+ * "Sell Products" and can be sold on its own as a product sale.
  *
  * The inventory item is the source of truth: it holds the stock, the selling
  * price and the type (detergent / fabcon). Each add-on item owns one linked
@@ -20,7 +22,10 @@ class InventoryAddOns
 {
     public const CATEGORY = 'Add Ons';
 
-    public const TYPES = ['detergent' => 'Detergent', 'fabcon' => 'Fabcon', 'other' => 'Other'];
+    /** Products tagged "Sell Product" in Inventory: can be sold on their own (product sale). */
+    public const SALE_CATEGORY = 'Sell Products';
+
+    public const TYPES = ['detergent' => 'Detergent', 'fabcon' => 'Fabcon'];
 
     /** Default branded add-on products created for every branch. */
     public static function defaults(): array
@@ -36,10 +41,10 @@ class InventoryAddOns
         ];
     }
 
-    public static function categoryId(): int
+    public static function categoryId(string $name = self::CATEGORY): int
     {
         $category = LaundryServiceCategory::query()->firstOrCreate(
-            ['name' => self::CATEGORY],
+            ['name' => $name],
             [
                 'visibility' => 'all',
                 'sort_order' => (int) LaundryServiceCategory::query()->max('sort_order') + 1,
@@ -50,14 +55,27 @@ class InventoryAddOns
         return (int) $category->id;
     }
 
-    /** Create or update the Job Order service that sells this inventory item. */
+    /**
+     * Create or update the Job Order services that sell this inventory item:
+     * one under "Add Ons" when tagged Add-On, one under "Sell Products" when tagged
+     * Sell Product. Both use the same stock. Returns the Add-On service.
+     */
     public static function sync(Inventory $inventory): ?LaundryService
     {
+        $reportCategory = array_key_exists((string) $inventory->add_on_type, self::TYPES) ? $inventory->add_on_type : 'other';
+
+        self::syncLinkedService($inventory, 'sale_inventory_id', (bool) $inventory->is_for_sale, self::SALE_CATEGORY, $inventory->is_add_on ? $reportCategory : 'other');
+
+        return self::syncLinkedService($inventory, 'add_on_inventory_id', (bool) $inventory->is_add_on, self::CATEGORY, $reportCategory);
+    }
+
+    private static function syncLinkedService(Inventory $inventory, string $linkColumn, bool $tagged, string $category, string $reportCategory): ?LaundryService
+    {
         $service = LaundryService::withTrashed()
-            ->where('add_on_inventory_id', $inventory->id)
+            ->where($linkColumn, $inventory->id)
             ->first();
 
-        $sellable = $inventory->is_add_on && ! $inventory->trashed();
+        $sellable = $tagged && ! $inventory->trashed();
 
         if (! $sellable) {
             if ($service && $service->is_active) {
@@ -69,9 +87,9 @@ class InventoryAddOns
 
         $attributes = [
             'branch_id' => $inventory->branch_id,
-            'service_category_id' => self::categoryId(),
+            'service_category_id' => self::categoryId($category),
             'name' => $inventory->name,
-            'report_category' => array_key_exists((string) $inventory->add_on_type, self::TYPES) ? $inventory->add_on_type : 'other',
+            'report_category' => $reportCategory,
             'pricing_type' => 'piece',
             'price' => (float) ($inventory->selling_price ?? 0),
             'is_active' => (bool) $inventory->is_active,
@@ -83,7 +101,7 @@ class InventoryAddOns
             }
             $service->update($attributes);
         } else {
-            $service = LaundryService::query()->create($attributes + ['add_on_inventory_id' => $inventory->id]);
+            $service = LaundryService::query()->create($attributes + [$linkColumn => $inventory->id]);
         }
 
         // One sale of the add-on uses exactly one unit of its inventory item.

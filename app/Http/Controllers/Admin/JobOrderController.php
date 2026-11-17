@@ -137,7 +137,7 @@ class JobOrderController extends Controller
         $services = LaundryService::where('is_active', true)
             ->when(! in_array($user->role, ['super_admin', 'admin'], true), fn ($q) => $q->where('branch_id', $user->branch_id))
             ->orderBy('name')
-            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'pricing_type', 'price']);
+            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'sale_inventory_id', 'pricing_type', 'price']);
         $services = $this->servicesForPos($services);
 
         $serviceCategories = LaundryServiceCategory::where('is_active', true)
@@ -205,7 +205,7 @@ class JobOrderController extends Controller
                 ->where('is_active', true)
                 ->orWhereIn('id', $serviceIds))
             ->orderBy('name')
-            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'pricing_type', 'price']);
+            ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'sale_inventory_id', 'pricing_type', 'price']);
         $services = $this->servicesForPos($services);
 
         $branches = Branch::query()
@@ -317,7 +317,7 @@ class JobOrderController extends Controller
             ]);
         }
 
-        // A cart with only add-on products (Ariel, Downy, plastic bottles, ...) is a product sale:
+        // A cart with only "Sell Products" items (tagged Sell Product in Inventory) is a product sale:
         // sold from this branch's own stock, never sent to a processing branch, released right away.
         $isProductSale = $this->isProductSaleCart($selectedServices);
 
@@ -597,7 +597,7 @@ class JobOrderController extends Controller
         if ($jobOrder->is_product_sale) {
             if (! $this->isProductSaleCart($selectedServices)) {
                 throw ValidationException::withMessages([
-                    'items' => 'A product sale can only contain add-on products. Create a new job order for laundry services.',
+                    'items' => 'A product sale can only contain Sell Products items. Create a new job order for laundry services and add-ons.',
                 ]);
             }
 
@@ -1168,11 +1168,11 @@ class JobOrderController extends Controller
         });
     }
 
-    /** True when every item in the cart is an add-on product (no laundry service at all). */
+    /** True when every item in the cart is a "Sell Products" item (no laundry, no add-ons). */
     private function isProductSaleCart($services): bool
     {
         return $services->isNotEmpty()
-            && $services->every(fn (LaundryService $service) => $service->isAddOn());
+            && $services->every(fn (LaundryService $service) => $service->isSaleProduct());
     }
 
     /** The shared "Walk-in Customer" of a branch, used for product sales without a named customer. */
@@ -1255,7 +1255,7 @@ class JobOrderController extends Controller
 
                 // Add-on stock (Downy 24ML, Ariel, ...) is sold in whole pieces:
                 // 1 pc per quantity sold, even if an older service rule says 24 (ml).
-                $perUnit = ($inventory->is_add_on || $usage->inventory?->is_add_on)
+                $perUnit = ($service->isInventoryProduct() || $inventory->is_add_on || $usage->inventory?->is_add_on)
                     ? 1.0
                     : (float) $usage->quantity;
 
@@ -1373,23 +1373,28 @@ class JobOrderController extends Controller
      */
     private function servicesForPos($services)
     {
-        $services->load('addOnInventory:id,quantity,unit,reorder_level');
+        $services->load(['addOnInventory:id,quantity,unit,reorder_level', 'saleInventory:id,quantity,unit,reorder_level']);
 
-        return $services->map(fn (LaundryService $service) => [
-            'id' => $service->id,
-            'branch_id' => $service->branch_id,
-            'name' => $service->name,
-            'service_category_id' => $service->service_category_id,
-            'report_category' => $service->report_category,
-            'pricing_type' => $service->pricing_type,
-            'price' => $service->price,
-            'is_add_on' => $service->isAddOn(),
-            'stock' => $service->addOnInventory ? (float) $service->addOnInventory->quantity : null,
-            'stock_unit' => $service->addOnInventory?->unit,
-            'low_stock' => $service->addOnInventory
-                ? (float) $service->addOnInventory->quantity <= (float) $service->addOnInventory->reorder_level
-                : false,
-        ])->values();
+        return $services->map(function (LaundryService $service) {
+            $stock = $service->productInventory();
+
+            return [
+                'id' => $service->id,
+                'branch_id' => $service->branch_id,
+                'name' => $service->name,
+                'service_category_id' => $service->service_category_id,
+                'report_category' => $service->report_category,
+                'pricing_type' => $service->pricing_type,
+                'price' => $service->price,
+                'is_add_on' => $service->isAddOn(),
+                'is_sale_product' => $service->isSaleProduct(),
+                // Add Ons and Sell Products share one inventory stock item.
+                'stock_inventory_id' => $stock?->id,
+                'stock' => $stock ? (float) $stock->quantity : null,
+                'stock_unit' => $stock?->unit,
+                'low_stock' => $stock ? (float) $stock->quantity <= (float) $stock->reorder_level : false,
+            ];
+        })->values();
     }
 
     /**
@@ -1420,7 +1425,7 @@ class JobOrderController extends Controller
         $sourceIsDropoffStock = $sourceInventory
             && (int) $sourceInventory->branch_id === (int) $order->branch_id;
 
-        if ($sourceIsDropoffStock && $service?->isAddOn()) {
+        if ($sourceIsDropoffStock && $service?->isInventoryProduct()) {
             return $sourceInventory;
         }
 

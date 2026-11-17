@@ -16,9 +16,9 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 /**
- * Product sales: a cart with only add-on products (Ariel, Downy, plastic bottles, ...)
+ * Product sales: a cart with only "Sell Products" items (inventory tagged Sell Product)
  * is sold from the selling branch's own stock, is never transferred to a processing
- * branch, and is completed/released right away.
+ * branch, and is completed/released right away. Add-On-only carts keep the laundry flow.
  */
 class ProductSaleTest extends TestCase
 {
@@ -79,11 +79,11 @@ class ProductSaleTest extends TestCase
         ]);
     }
 
-    private function addOn(string $name, string $type = 'fabcon', float $price = 15, float $stock = 5, ?User $as = null): LaundryService
+    private function inventoryItem(string $name, array $tags, float $price = 15, float $stock = 5, ?User $as = null): Inventory
     {
         $user = $as ?? $this->cashier;
 
-        $this->actingAs($user)->post(route('admin.inventory.store'), [
+        $this->actingAs($user)->post(route('admin.inventory.store'), array_merge([
             'branch_id' => $user->branch_id,
             'name' => $name,
             'unit' => 'pcs',
@@ -91,12 +91,22 @@ class ProductSaleTest extends TestCase
             'reorder_level' => 1,
             'unit_cost' => 5,
             'is_active' => 1,
-            'is_add_on' => 1,
-            'add_on_type' => $type,
             'selling_price' => $price,
-        ])->assertSessionHasNoErrors();
+        ], $tags))->assertSessionHasNoErrors();
 
-        return Inventory::query()->where('branch_id', $user->branch_id)->where('name', $name)->firstOrFail()->addOnService;
+        return Inventory::query()->where('branch_id', $user->branch_id)->where('name', $name)->firstOrFail();
+    }
+
+    /** An inventory item tagged "Sell Product"; returns its Sell Products service. */
+    private function addOn(string $name, string $type = 'fabcon', float $price = 15, float $stock = 5, ?User $as = null): LaundryService
+    {
+        return $this->inventoryItem($name, ['is_for_sale' => 1], $price, $stock, $as)->saleService;
+    }
+
+    /** An inventory item tagged only "Add-On"; returns its Add Ons service. */
+    private function addOnOnly(string $name, string $type = 'fabcon', float $price = 15, float $stock = 5): LaundryService
+    {
+        return $this->inventoryItem($name, ['is_add_on' => 1, 'add_on_type' => $type], $price, $stock)->addOnService;
     }
 
     private function laundryService(Branch $branch): LaundryService
@@ -169,8 +179,8 @@ class ProductSaleTest extends TestCase
         $this->assertSame(0, JobOrderTransfer::query()->count());
 
         // Stock comes out of the selling branch's own inventory.
-        $this->assertEquals(3, (float) $downy->addOnInventory->fresh()->quantity);
-        $this->assertEquals(4, (float) $ariel->addOnInventory->fresh()->quantity);
+        $this->assertEquals(3, (float) $downy->saleInventory->fresh()->quantity);
+        $this->assertEquals(4, (float) $ariel->saleInventory->fresh()->quantity);
 
         // Paid in full and recorded as a normal payment for sales reports.
         $this->assertEquals(50, (float) $order->total);
@@ -210,17 +220,111 @@ class ProductSaleTest extends TestCase
         $this->assertTrue($order->is_product_sale);
         $this->assertSame('completed', $order->status);
         $this->assertSame($customer->id, (int) $order->customer_id);
-        $this->assertEquals(7, (float) $bottle->addOnInventory->fresh()->quantity);
+        $this->assertEquals(7, (float) $bottle->saleInventory->fresh()->quantity);
         $this->assertSame('other', $order->items->first()->service_category);
     }
 
-    public function test_other_add_on_type_can_be_saved_for_items_like_plastic_bottles(): void
+    public function test_sell_product_tag_creates_service_under_sell_products(): void
     {
         $bottle = $this->addOn('Plastic Bottle', 'other', 10, 10);
 
-        $this->assertTrue($bottle->isAddOn());
-        $this->assertSame('other', $bottle->report_category);
-        $this->assertSame('other', $bottle->addOnInventory->add_on_type);
+        $this->assertTrue($bottle->isSaleProduct());
+        $this->assertFalse($bottle->isAddOn());
+        $this->assertSame('Sell Products', $bottle->serviceCategory->name);
+        $this->assertSame('piece', $bottle->pricing_type);
+        $this->assertEquals(10, (float) $bottle->price);
+        $this->assertNull($bottle->saleInventory->addOnService, 'Not tagged Add-On, so no Add Ons service.');
+
+        // Managed from Inventory: hidden from the Services page and cannot be deleted there.
+        $this->actingAs($this->cashier)->get(route('admin.services.index'))
+            ->assertOk()
+            ->assertDontSee('services/'.$bottle->id, false);
+        $this->actingAs($this->cashier)->delete(route('admin.services.destroy', $bottle))
+            ->assertSessionHasErrors('name');
+    }
+
+    public function test_item_tagged_add_on_and_sell_product_shares_one_stock(): void
+    {
+        $downy = $this->inventoryItem('Downy', ['is_add_on' => 1, 'add_on_type' => 'fabcon', 'is_for_sale' => 1], 15, 5);
+        $addOnService = $downy->addOnService;
+        $saleService = $downy->saleService;
+
+        $this->assertNotNull($addOnService);
+        $this->assertNotNull($saleService);
+        $this->assertNotSame($addOnService->id, $saleService->id);
+        $this->assertSame('Add Ons', $addOnService->serviceCategory->name);
+        $this->assertSame('Sell Products', $saleService->serviceCategory->name);
+
+        // Sold on its own from Sell Products: product sale from the same stock.
+        $this->sell([$this->line($saleService, 2)])->assertSessionHasNoErrors();
+        $this->assertTrue(JobOrder::query()->sole()->is_product_sale);
+        $this->assertEquals(3, (float) $downy->fresh()->quantity);
+
+        // POS sees both services on one stock item.
+        $this->actingAs($this->cashier)->get(route('admin.job-orders.create'))
+            ->assertOk()
+            ->assertViewHas('services', fn ($services) => collect($services)
+                ->whereIn('id', [$addOnService->id, $saleService->id])
+                ->every(fn ($s) => $s['stock_inventory_id'] === $downy->id && $s['stock'] === 3.0));
+
+        // Unticking Sell Product stops it selling there; the Add-On keeps selling.
+        $this->actingAs($this->cashier)->put(route('admin.inventory.update', $downy), [
+            'branch_id' => $this->dropoff->id,
+            'name' => 'Downy',
+            'unit' => 'pcs',
+            'quantity' => 3,
+            'reorder_level' => 1,
+            'unit_cost' => 5,
+            'is_active' => 1,
+            'is_add_on' => 1,
+            'add_on_type' => 'fabcon',
+            'selling_price' => 15,
+        ])->assertSessionHasNoErrors();
+        $this->assertFalse($saleService->fresh()->is_active);
+        $this->assertTrue($addOnService->fresh()->is_active);
+    }
+
+    public function test_sell_product_requires_selling_price(): void
+    {
+        $this->actingAs($this->cashier)->post(route('admin.inventory.store'), [
+            'branch_id' => $this->dropoff->id,
+            'name' => 'Plastic Bottle',
+            'unit' => 'pcs',
+            'quantity' => 3,
+            'reorder_level' => 1,
+            'unit_cost' => 5,
+            'is_for_sale' => 1,
+        ])->assertSessionHasErrors('selling_price');
+    }
+
+    public function test_add_on_only_cart_is_not_a_product_sale(): void
+    {
+        $downy = $this->addOnOnly('Downy', 'fabcon', 15, 5);
+        $customer = $this->customer($this->dropoff);
+
+        // Add Ons go with laundry: a drop-off branch still has to pick a processing branch.
+        $this->sell([$this->line($downy, 1)], ['customer_id' => $customer->id])
+            ->assertSessionHasErrors('processing_branch_id');
+
+        $this->sell([$this->line($downy, 1)], [
+            'customer_id' => $customer->id,
+            'processing_branch_id' => $this->production->id,
+        ])->assertSessionHasNoErrors();
+
+        $order = JobOrder::query()->sole();
+        $this->assertFalse($order->is_product_sale);
+        $this->assertSame('pending', $order->status);
+        $this->assertSame(1, JobOrderTransfer::query()->where('job_order_id', $order->id)->count());
+    }
+
+    public function test_sell_product_with_add_on_in_cart_is_not_a_product_sale(): void
+    {
+        $bottle = $this->addOn('Plastic Bottle', 'other', 10, 5);
+        $downy = $this->addOnOnly('Downy', 'fabcon', 15, 5);
+
+        $this->sell([$this->line($bottle, 1), $this->line($downy, 1)])
+            ->assertSessionHasErrors(['processing_branch_id']);
+        $this->assertSame(0, JobOrder::query()->count());
     }
 
     public function test_cart_with_laundry_service_still_requires_processing_branch_and_transfers(): void
@@ -270,7 +374,7 @@ class ProductSaleTest extends TestCase
 
         $this->assertSame(0, JobOrder::query()->count());
         $this->assertSame(0, Customer::query()->count(), 'The walk-in customer is rolled back with the failed sale.');
-        $this->assertEquals(5, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(5, (float) $downy->saleInventory->fresh()->quantity);
     }
 
     public function test_named_customer_can_take_product_sale_unpaid_within_unpaid_limit(): void
@@ -288,7 +392,7 @@ class ProductSaleTest extends TestCase
         $order = JobOrder::query()->sole();
         $this->assertEquals(30, (float) $order->balance);
         $this->assertSame('completed', $order->status);
-        $this->assertEquals(3, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(3, (float) $downy->saleInventory->fresh()->quantity);
     }
 
     public function test_product_sale_is_blocked_when_stock_is_insufficient(): void
@@ -298,7 +402,7 @@ class ProductSaleTest extends TestCase
         $this->sell([$this->line($downy, 2)])->assertSessionHasErrors('items');
 
         $this->assertSame(0, JobOrder::query()->count());
-        $this->assertEquals(1, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(1, (float) $downy->saleInventory->fresh()->quantity);
     }
 
     public function test_product_sale_can_be_voided_and_stock_is_returned(): void
@@ -314,7 +418,7 @@ class ProductSaleTest extends TestCase
         $order->refresh();
         $this->assertSame('cancelled', $order->status);
         $this->assertNull($order->released_at);
-        $this->assertEquals(5, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(5, (float) $downy->saleInventory->fresh()->quantity);
     }
 
     public function test_editing_product_sale_adjusts_stock_and_stays_completed_locally(): void
@@ -341,7 +445,7 @@ class ProductSaleTest extends TestCase
         $order->refresh();
         $this->assertSame('completed', $order->status, 'A product sale cannot be moved back into the laundry workflow.');
         $this->assertSame($this->dropoff->id, (int) $order->processing_branch_id);
-        $this->assertEquals(2, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(2, (float) $downy->saleInventory->fresh()->quantity);
         $this->assertSame(0, JobOrderTransfer::query()->count());
 
         // Laundry cannot be added to a product sale.
@@ -349,7 +453,7 @@ class ProductSaleTest extends TestCase
         $this->actingAs($this->cashier)->put(route('admin.job-orders.update', $order), array_merge($payload, [
             'items' => [$this->line($downy, 3), $this->line($wash, 1)],
         ]))->assertSessionHasErrors('items');
-        $this->assertEquals(2, (float) $downy->addOnInventory->fresh()->quantity);
+        $this->assertEquals(2, (float) $downy->saleInventory->fresh()->quantity);
     }
 
     public function test_new_branch_defaults_no_longer_include_for_sale_items_or_sachet(): void
