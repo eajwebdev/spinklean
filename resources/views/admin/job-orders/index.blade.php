@@ -137,7 +137,9 @@
                             @if($order->is_rush)
                                 <span class="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush</span>
                             @endif
-                            @if($order->is_product_sale)
+                            @if($order->baggageDeposit)
+                                <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Baggage Tag #{{ $order->baggageDeposit->tagLabel() }}</span>
+                            @elseif($order->is_product_sale)
                                 <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Product Sale</span>
                             @endif
                         </td>
@@ -227,7 +229,7 @@
                             <a href="{{ route('admin.job-orders.show', $order) }}" title="View" aria-label="View job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                 <span data-lucide="eye" class="h-4 w-4"></span>
                             </a>
-                            @if($order->status !== 'cancelled')
+                            @if($order->status !== 'cancelled' && ! $order->baggageDeposit)
                                 <a href="{{ route('admin.job-orders.edit', $order) }}" title="Edit" aria-label="Edit job order" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">
                                     <span data-lucide="settings" class="h-4 w-4"></span>
                                 </a>

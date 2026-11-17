@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Admin\AccountsPayableController;
 use App\Http\Controllers\Admin\AttendanceController;
+use App\Http\Controllers\Admin\BaggageController;
 use App\Http\Controllers\Admin\BillingController;
 use App\Http\Controllers\Admin\BranchController;
 use App\Http\Controllers\Admin\CustomerController;
@@ -140,6 +141,13 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::post('/job-orders/{jobOrder}/payments', [ReceivableController::class, 'storePayment'])->name('job-orders.payments.store');
             Route::patch('/job-orders/{jobOrder}/cancel', [JobOrderController::class, 'cancel'])->name('job-orders.cancel');
             Route::delete('/job-orders/{jobOrder}', [JobOrderController::class, 'destroy'])->name('job-orders.destroy');
+        });
+        Route::middleware('menu.access:baggage')->group(function () {
+            Route::get('/baggage', [BaggageController::class, 'index'])->name('baggage.index');
+            Route::post('/baggage', [BaggageController::class, 'store'])->name('baggage.store');
+            Route::patch('/baggage/settings', [BaggageController::class, 'updateSettings'])->name('baggage.settings');
+            Route::patch('/baggage/{deposit}/release', [BaggageController::class, 'release'])->name('baggage.release');
+            Route::patch('/baggage/{deposit}/void', [BaggageController::class, 'void'])->name('baggage.void');
         });
         Route::middleware('menu.access:payments')->group(function () {
             Route::get('/payments', [PaymentController::class, 'index'])->name('payments.index');

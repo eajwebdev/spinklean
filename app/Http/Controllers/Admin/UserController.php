@@ -206,6 +206,7 @@ class UserController extends Controller
             'branch_manager' => $assignable([
                 'dashboard',
                 'job_orders',
+                'baggage',
                 'cycles',
                 'customers',
                 'services',
@@ -230,6 +231,7 @@ class UserController extends Controller
             'cashier' => $assignable([
                 'dashboard',
                 'job_orders',
+                'baggage',
                 'cycles',
                 'customers',
                 'payments',

@@ -44,9 +44,16 @@
                     <p class="text-sm text-amber-600">Waiting for {{ $order->processingBranch->name }} to receive tag into production.</p>
                 @endif
             @endif
-            @if($order->is_product_sale)
+            @if($order->baggageDeposit)
+                @php($bag = $order->baggageDeposit)
+                <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Baggage Tag #{{ $bag->tagLabel() }}</span>
+                <p class="text-sm text-muted">
+                    {{ \App\Support\BaggageCounter::label($bag->size) }} · stored {{ $bag->deposited_at?->format('M d, h:i A') }}
+                    · {{ $bag->voided_at ? 'voided' : ($bag->released_at ? 'released '.$bag->released_at->format('M d, h:i A') : 'still at the counter') }}
+                </p>
+            @elseif($order->is_product_sale)
                 <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Product Sale</span>
-                <p class="text-sm text-muted">Add-on products sold from {{ $order->branch?->name }} stock. No laundry processing or transfer.</p>
+                <p class="text-sm text-muted">Products sold from {{ $order->branch?->name }} stock. No laundry processing or transfer.</p>
             @else
                 <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
             @endif
@@ -71,10 +78,17 @@
                 </form>
             @endif
             <a href="{{ route('admin.job-orders.index') }}" class="inline-flex h-9 items-center rounded-md border border-border px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">Back</a>
+            @if($order->baggageDeposit)
+                <a href="{{ route('admin.baggage.index', ['branch_id' => $order->branch_id]) }}" class="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
+                    <span data-lucide="package" class="h-4 w-4"></span>
+                    Baggage Counter
+                </a>
+            @else
             <a href="{{ route('admin.job-orders.edit', $order) }}" class="inline-flex h-9 items-center gap-2 rounded-md border border-border px-3 text-sm font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">
                 <span data-lucide="settings" class="h-4 w-4"></span>
                 Edit
             </a>
+            @endif
             <button type="button" @click="receiptOpen = true" class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-white hover:opacity-90">
                 <span data-lucide="receipt" class="h-4 w-4"></span>
                 Receipt

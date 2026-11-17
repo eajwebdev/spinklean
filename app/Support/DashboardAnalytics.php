@@ -3,6 +3,7 @@
 namespace App\Support;
 
 use App\Models\ActivityLog;
+use App\Models\BaggageDeposit;
 use App\Models\BranchExpense;
 use App\Models\Customer;
 use App\Models\CycleRecord;
@@ -40,6 +41,7 @@ class DashboardAnalytics
             'peak' => $this->peak(),
             'category_sales' => $this->categorySales(),
             'add_ons' => $this->addOns(),
+            'baggage' => $this->baggage(),
             'trend_7d' => $this->sevenDayTrend(),
             'receivables_aging' => $this->receivablesAging(),
             'top_debtors' => $this->topDebtors(),
@@ -233,6 +235,134 @@ class DashboardAnalytics
                 'quantity' => number_format((float) $row->quantity),
                 'amount' => $this->money((float) $row->total_amount),
             ])->values(),
+        ];
+    }
+
+    /**
+     * Baggage Counter sales. They are already inside every sales total on the dashboard
+     * (each deposit is a paid Job Order); this breaks them out by bag size.
+     */
+    private function baggage(): array
+    {
+        $now = now();
+        $relations = ['branch:id,name', 'jobOrder:id,job_order_number,status,total', 'depositor:id,name', 'releaser:id,name'];
+
+        $deposits = BaggageDeposit::query()
+            ->with($relations)
+            ->when($this->branchId, fn ($q) => $q->where('branch_id', $this->branchId))
+            ->whereDate('deposited_at', '>=', $this->dateFrom)
+            ->whereDate('deposited_at', '<=', $this->dateTo)
+            ->orderByDesc('deposited_at')
+            ->get();
+
+        // A sale counts unless it was voided / its Job Order cancelled or deleted.
+        $isSold = fn (BaggageDeposit $d) => ! $d->voided_at && $d->jobOrder && $d->jobOrder->status !== 'cancelled';
+        $amountOf = fn (BaggageDeposit $d) => (float) ($d->jobOrder?->total ?? $d->amount);
+        $sold = $deposits->filter($isSold)->values();
+        $total = (float) $sold->sum($amountOf);
+
+        $sizeRows = collect(BaggageCounter::SIZES)
+            ->map(function (array $definition, string $size) use ($sold, $amountOf) {
+                $bags = $sold->where('size', $size);
+
+                return ['size' => $size, 'label' => $definition['label'], 'bags' => $bags->count(), 'amount' => (float) $bags->sum($amountOf)];
+            })
+            ->filter(fn ($row) => $row['bags'] > 0)
+            ->values();
+
+        $released = $sold->filter(fn (BaggageDeposit $d) => $d->released_at);
+        $storageHours = $released->map(fn (BaggageDeposit $d) => $d->deposited_at->diffInMinutes($d->released_at) / 60);
+        $lateReleases = $released->filter(fn (BaggageDeposit $d) => $d->released_at->greaterThan($d->due_at))->count();
+
+        $days = collect(CarbonPeriod::create($this->dateFrom, $this->dateTo))
+            ->map(fn ($day) => $day->toDateString());
+        $daily = $days->map(fn (string $day) => (float) $sold
+            ->filter(fn (BaggageDeposit $d) => $d->deposited_at->toDateString() === $day)
+            ->sum($amountOf));
+
+        $hourly = $sold
+            ->groupBy(fn (BaggageDeposit $d) => (int) $d->deposited_at->format('G'))
+            ->map->count()
+            ->sortKeys();
+
+        $active = BaggageDeposit::query()
+            ->with($relations)
+            ->active()
+            ->when($this->branchId, fn ($q) => $q->where('branch_id', $this->branchId))
+            ->orderBy('due_at')
+            ->get();
+
+        return [
+            'total' => $this->money($total),
+            'bags' => number_format($sold->count()),
+            'average' => $this->money($sold->count() > 0 ? $total / $sold->count() : 0),
+            'cash' => $this->money((float) $sold->where('payment_type', 'cash')->sum($amountOf)),
+            'gcash' => $this->money((float) $sold->where('payment_type', 'gcash')->sum($amountOf)),
+            'released' => number_format($released->count()),
+            'late_releases' => number_format($lateReleases),
+            'on_time_rate' => $this->percent((float) ($released->count() - $lateReleases), (float) $released->count()),
+            'voided' => number_format($deposits->whereNotNull('voided_at')->count()),
+            'average_storage' => $this->hours($storageHours->isNotEmpty() ? (float) $storageHours->avg() : null),
+            'longest_storage' => $this->hours($storageHours->isNotEmpty() ? (float) $storageHours->max() : null),
+            'stored_now' => number_format($active->count()),
+            'overdue_now' => number_format($active->filter(fn (BaggageDeposit $d) => $now->greaterThan($d->due_at))->count()),
+            'rows' => $sizeRows->map(fn ($row) => [
+                'label' => $row['label'],
+                'bags' => number_format($row['bags']),
+                'amount' => $this->money($row['amount']),
+                'share' => $this->percent($row['amount'], $total),
+            ])->values(),
+            'at_counter' => $active->map(fn (BaggageDeposit $d) => $this->baggageRow($d, $now))->values(),
+            'list' => $deposits->take(300)->map(fn (BaggageDeposit $d) => $this->baggageRow($d, $now))->values(),
+            'list_truncated' => $deposits->count() > 300,
+            'charts' => [
+                'sizes' => [
+                    'labels' => $sizeRows->pluck('label')->values(),
+                    'values' => $sizeRows->map(fn ($row) => round($row['amount'], 2))->values(),
+                ],
+                'daily' => [
+                    'labels' => $days->map(fn (string $day) => Carbon::parse($day)->format('M d'))->values(),
+                    'values' => $daily->map(fn ($value) => round($value, 2))->values(),
+                ],
+                'hourly' => [
+                    'labels' => $hourly->keys()->map(fn ($hour) => Carbon::createFromTime((int) $hour)->format('g A'))->values(),
+                    'values' => $hourly->values(),
+                ],
+            ],
+        ];
+    }
+
+    private function baggageRow(BaggageDeposit $d, Carbon $now): array
+    {
+        $status = match (true) {
+            (bool) $d->voided_at => ['Voided', 'bad'],
+            (bool) $d->released_at && $d->released_at->greaterThan($d->due_at) => ['Released late', 'warn'],
+            (bool) $d->released_at => ['Released', 'ok'],
+            $now->greaterThan($d->due_at) => ['Overdue', 'bad'],
+            default => ['Stored', 'info'],
+        };
+        $end = $d->released_at ?? $d->voided_at ?? $now;
+        $minutes = (int) $d->deposited_at->diffInMinutes($end);
+
+        return [
+            'id' => $d->id,
+            'tag' => $d->tagLabel(),
+            'branch' => $d->branch?->name,
+            'size' => BaggageCounter::label($d->size),
+            'amount' => $this->money((float) ($d->jobOrder?->total ?? $d->amount)),
+            'payment_type' => strtoupper((string) $d->payment_type),
+            'deposited_at' => $d->deposited_at?->format('M d, h:i A'),
+            'due_at' => $d->due_at?->format('M d, h:i A'),
+            'due_iso' => $d->due_at?->toIso8601String(),
+            'released_at' => $d->released_at?->format('M d, h:i A'),
+            'stored_for' => intdiv($minutes, 60).'h '.str_pad((string) ($minutes % 60), 2, '0', STR_PAD_LEFT).'m',
+            'status' => $status[0],
+            'tone' => $status[1],
+            'deposited_by' => $d->depositor?->name,
+            'released_by' => $d->releaser?->name,
+            'job_order_number' => $d->jobOrder?->job_order_number,
+            'job_order_url' => $d->job_order_id ? route('admin.job-orders.show', $d->job_order_id) : null,
+            'notes' => $d->notes,
         ];
     }
 

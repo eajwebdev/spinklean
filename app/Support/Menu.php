@@ -9,6 +9,7 @@ class Menu
         return [
             'dashboard' => ['label' => 'Dashboard', 'route' => 'dashboard', 'icon' => 'dashboard'],
             'job_orders' => ['label' => 'Job Orders', 'route' => 'admin.job-orders.index', 'icon' => 'jobOrders'],
+            'baggage' => ['label' => 'Baggage Counter', 'route' => 'admin.baggage.index', 'icon' => 'package'],
             'cycles' => ['label' => 'Cycle Monitoring', 'route' => 'admin.cycles.index', 'icon' => 'cycles'],
             'customers' => ['label' => 'Customers', 'route' => 'admin.customers.index', 'icon' => 'customers'],
             'services' => ['label' => 'Laundry Services', 'route' => 'admin.services.index', 'icon' => 'services'],

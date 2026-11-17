@@ -88,6 +88,11 @@ class User extends Authenticatable
             return false;
         }
 
+        // Anyone who can make Job Orders can run the Baggage Counter (no need to re-save every user).
+        if ($key === 'baggage' && in_array('job_orders', $this->access ?? [], true)) {
+            return true;
+        }
+
         return in_array($key, $this->access ?? [], true);
     }
 

@@ -19,6 +19,7 @@ use App\Models\ServicePreset;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Support\Activity;
+use App\Support\BaggageCounter;
 use App\Support\SmsNotifier;
 use App\Support\TagValidator;
 use Illuminate\Http\Request;
@@ -40,7 +41,7 @@ class JobOrderController extends Controller
         $user = $request->user();
         [$dateFrom, $dateTo] = $this->dateRange($request);
 
-        $ordersQuery = JobOrder::with(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'items', 'payments.receiver', 'payments.collectedBranch', 'poTransaction', 'transfers.destinationBranch'])
+        $ordersQuery = JobOrder::with(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'items', 'payments.receiver', 'payments.collectedBranch', 'poTransaction', 'transfers.destinationBranch', 'baggageDeposit'])
             ->when($user->role !== 'super_admin' && $user->role !== 'admin', fn ($q) => $q->where('branch_id', $user->branch_id))
             ->when($dateFrom, fn ($q) => $q->whereDate('created_at', '>=', $dateFrom))
             ->when($dateTo, fn ($q) => $q->whereDate('created_at', '<=', $dateTo))
@@ -136,11 +137,13 @@ class JobOrderController extends Controller
             ->get(['id', 'branch_id', 'name', 'phone', 'billing_type']);
         $services = LaundryService::where('is_active', true)
             ->when(! in_array($user->role, ['super_admin', 'admin'], true), fn ($q) => $q->where('branch_id', $user->branch_id))
+            ->whereNull('baggage_size') // Baggage rates are sold from the Baggage Counter only.
             ->orderBy('name')
             ->get(['id', 'branch_id', 'name', 'service_category_id', 'report_category', 'add_on_inventory_id', 'sale_inventory_id', 'pricing_type', 'price']);
         $services = $this->servicesForPos($services);
 
         $serviceCategories = LaundryServiceCategory::where('is_active', true)
+            ->where('name', '!=', BaggageCounter::CATEGORY)
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get(['id', 'name', 'visibility', 'branch_id']);
@@ -185,6 +188,7 @@ class JobOrderController extends Controller
     {
         $this->authorizeJobOrder($request, $jobOrder);
         abort_if($jobOrder->status === 'cancelled', 422, 'Cancelled job orders cannot be edited.');
+        abort_if($jobOrder->baggageDeposit()->exists(), 422, 'Baggage deposits are managed from the Baggage Counter.');
 
         $jobOrder->load(['branch', 'processingBranch', 'customer', 'items.service', 'payments']);
         $user = $request->user();
@@ -201,6 +205,7 @@ class JobOrderController extends Controller
 
         $services = LaundryService::query()
             ->where('branch_id', $branchId)
+            ->whereNull('baggage_size')
             ->where(fn ($query) => $query
                 ->where('is_active', true)
                 ->orWhereIn('id', $serviceIds))
@@ -225,6 +230,7 @@ class JobOrderController extends Controller
             ->values();
 
         $serviceCategories = LaundryServiceCategory::where('is_active', true)
+            ->where('name', '!=', BaggageCounter::CATEGORY)
             ->orderBy('sort_order')
             ->orderBy('name')
             ->get(['id', 'name', 'visibility', 'branch_id']);
@@ -540,6 +546,7 @@ class JobOrderController extends Controller
     {
         $this->authorizeJobOrder($request, $jobOrder);
         abort_if($jobOrder->status === 'cancelled', 422, 'Cancelled job orders cannot be edited.');
+        abort_if($jobOrder->baggageDeposit()->exists(), 422, 'Baggage deposits are managed from the Baggage Counter.');
 
         $validated = $request->validate([
             'customer_id' => ['required', 'exists:customers,id'],
@@ -828,6 +835,9 @@ class JobOrderController extends Controller
                 ->where('transfer_status', 'pending')
                 ->update(['transfer_status' => 'cancelled']);
 
+            // A cancelled baggage sale frees its claim tag.
+            $jobOrder->baggageDeposit()->whereNull('released_at')->whereNull('voided_at')->update(['voided_at' => now()]);
+
             $this->recalculateCustomerLedger((int) $jobOrder->customer_id);
 
             Activity::log($request, 'job_order_cancelled', $jobOrder, [
@@ -876,6 +886,7 @@ class JobOrderController extends Controller
                 ->orWhereIn('payment_id', $paymentIds)
                 ->delete();
 
+            $jobOrder->baggageDeposit()->whereNull('released_at')->whereNull('voided_at')->update(['voided_at' => now()]);
             $poTransaction?->delete();
             Payment::withoutGlobalScope('financially_active')->where('job_order_id', $jobOrder->id)->delete();
             $jobOrder->cycles()->delete();
@@ -958,7 +969,7 @@ class JobOrderController extends Controller
         return null;
     }
 
-    private function nextJobOrderNumber(int $branchId): string
+    public function nextJobOrderNumber(int $branchId): string
     {
         $globalPrefix = SystemSetting::current()->job_order_prefix ?: 'JO';
         $branchPrefix = BranchSetting::query()
@@ -988,7 +999,7 @@ class JobOrderController extends Controller
         return $numberPrefix.str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
     }
 
-    private function nextPaymentNumber(): string
+    public function nextPaymentNumber(): string
     {
         $prefix = 'PAY-'.now()->format('Ymd').'-';
         $lastNumber = Payment::withoutGlobalScope('financially_active')
@@ -1176,7 +1187,7 @@ class JobOrderController extends Controller
     }
 
     /** The shared "Walk-in Customer" of a branch, used for product sales without a named customer. */
-    private function walkInCustomer(Branch $branch): Customer
+    public function walkInCustomer(Branch $branch): Customer
     {
         return Customer::query()->firstOrCreate(
             ['branch_id' => $branch->id, 'name' => 'Walk-in Customer'],

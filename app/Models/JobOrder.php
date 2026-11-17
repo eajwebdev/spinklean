@@ -18,6 +18,11 @@ class JobOrder extends Model
         return $this->hasMany(JobOrderTransfer::class);
     }
 
+    public function baggageDeposit()
+    {
+        return $this->hasOne(BaggageDeposit::class);
+    }
+
     public function latestTransfer()
     {
         return $this->hasOne(JobOrderTransfer::class)->latestOfMany();

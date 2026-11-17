@@ -16,6 +16,9 @@
         'balances' => ['label' => 'Cash & Balances', 'icon' => 'wallet'],
         'operations' => ['label' => 'Operations', 'icon' => 'activity'],
     ];
+    if ($user->hasMenuAccess('baggage')) {
+        $tabs['baggage'] = ['label' => 'Baggage', 'icon' => 'package'];
+    }
     if ($canSeeAudit) {
         $tabs['audit'] = ['label' => 'Audit & Staff', 'icon' => 'shieldCheck'];
     }
@@ -491,6 +494,35 @@
                         </div>
                     </template>
                     <p x-show="data.analytics.add_ons.rows.length === 0" class="py-6 text-center text-muted">No add-ons sold in this period.</p>
+                </div>
+            </div>
+
+            <div class="{{ $panel }}" x-show="data.analytics.baggage">
+                <div class="mb-3 flex items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-semibold">Baggage Sales</h2>
+                        <p class="text-sm text-muted">Bags stored at the Baggage Counter. Already included in all sales totals.</p>
+                    </div>
+                    <div class="text-right">
+                        <p class="text-lg font-semibold" x-text="data.analytics.baggage?.total"></p>
+                        <p class="text-xs text-muted" x-text="`${data.analytics.baggage?.bags ?? 0} bag(s)`"></p>
+                    </div>
+                </div>
+                <div class="divide-y divide-border text-sm dark:divide-gray-800">
+                    <template x-for="row in (data.analytics.baggage?.rows ?? [])" :key="row.label">
+                        <div class="flex items-center justify-between gap-3 py-2">
+                            <span class="min-w-0 truncate font-medium" x-text="row.label"></span>
+                            <span class="shrink-0 text-xs text-muted" x-text="`${row.bags} bag(s) · ${row.amount}`"></span>
+                        </div>
+                    </template>
+                    <p x-show="(data.analytics.baggage?.rows ?? []).length === 0" class="py-6 text-center text-muted">No bags stored in this period.</p>
+                    <div class="flex items-center justify-between gap-3 py-2 text-xs">
+                        <span class="text-muted">At the counter now</span>
+                        <span>
+                            <span class="font-semibold" x-text="data.analytics.baggage?.stored_now ?? 0"></span> stored
+                            · <span class="font-semibold" :class="Number(data.analytics.baggage?.overdue_now ?? 0) > 0 ? 'text-red-600' : ''" x-text="data.analytics.baggage?.overdue_now ?? 0"></span> overdue
+                        </span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -984,6 +1016,184 @@
         </div>
     </section>
 
+    {{-- ============ BAGGAGE ============ --}}
+    @if(isset($tabs['baggage']))
+    @php
+        $baggageCards = [
+            ['Baggage Sales', 'data.analytics.baggage.total', 'payments', 'Paid storage in this period'],
+            ['Bags Stored', 'data.analytics.baggage.bags', 'package', 'Deposits in this period'],
+            ['Average per Bag', 'data.analytics.baggage.average', 'scale', 'Sales ÷ bags'],
+            ['At the Counter Now', 'data.analytics.baggage.stored_now', 'tag', 'Tags in use right now'],
+            ['Overdue Now', 'data.analytics.baggage.overdue_now', 'alertTriangle', 'Past their due time'],
+            ['Released Late', 'data.analytics.baggage.late_releases', 'timer', 'Picked up after the due time'],
+            ['Average Storage Time', 'data.analytics.baggage.average_storage', 'timer', 'Deposit to release'],
+            ['Voided', 'data.analytics.baggage.voided', 'x', 'Cancelled by mistake'],
+        ];
+    @endphp
+    <section x-show="tab === 'baggage'" x-cloak class="space-y-4" role="tabpanel">
+        <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            @foreach($baggageCards as [$label, $expr, $icon, $hint])
+                <div class="{{ $panel }}">
+                    <div class="flex items-center justify-between">
+                        <p class="text-xs font-medium text-muted">{{ $label }}</p>
+                        <span data-lucide="{{ $icon }}" class="h-4 w-4 text-primary"></span>
+                    </div>
+                    <p class="mt-1 text-lg font-semibold" x-text="{{ $expr }}"></p>
+                    <p class="text-xs text-muted">{{ $hint }}</p>
+                </div>
+            @endforeach
+        </div>
+
+        <div class="grid gap-4 xl:grid-cols-2">
+            <div class="{{ $panel }}">
+                <div class="mb-4 flex items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-base font-semibold">Sales by Bag Size</h2>
+                        <p class="text-sm text-muted">Small, medium, large/XL and overnight.</p>
+                    </div>
+                    @if($user->hasMenuAccess('baggage'))
+                        <a href="{{ route('admin.baggage.index') }}" class="{{ $linkBtn }}">Baggage Counter</a>
+                    @endif
+                </div>
+                <div class="grid gap-4 lg:grid-cols-2">
+                    <div class="h-56"><canvas x-ref="baggageSizesChart"></canvas></div>
+                    <div class="divide-y divide-border text-sm dark:divide-gray-800">
+                        <template x-for="row in data.analytics.baggage.rows" :key="row.label">
+                            <div class="py-2">
+                                <div class="flex items-center justify-between gap-3">
+                                    <span class="min-w-0 truncate font-medium" x-text="row.label"></span>
+                                    <span class="shrink-0 text-xs text-muted" x-text="`${row.bags} bag(s) · ${row.amount}`"></span>
+                                </div>
+                                <div class="mt-1 h-1.5 overflow-hidden rounded-full bg-smoke dark:bg-gray-800"><div class="h-full rounded-full bg-primary" :style="`width: ${bar(row.share)}%`"></div></div>
+                            </div>
+                        </template>
+                        <p x-show="data.analytics.baggage.rows.length === 0" class="py-6 text-center text-muted">No bags stored in this period.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="{{ $panel }}">
+                <div class="mb-4">
+                    <h2 class="text-base font-semibold">Baggage Sales per Day</h2>
+                    <p class="text-sm text-muted">Storage fees collected each day of the period.</p>
+                </div>
+                <div class="h-56"><canvas x-ref="baggageDailyChart"></canvas></div>
+            </div>
+        </div>
+
+        <div class="grid gap-4 xl:grid-cols-2">
+            <div class="{{ $panel }}">
+                <div class="mb-4">
+                    <h2 class="text-base font-semibold">Busiest Drop-off Hours</h2>
+                    <p class="text-sm text-muted">Bags deposited per hour of the day.</p>
+                </div>
+                <div class="h-56"><canvas x-ref="baggageHourlyChart"></canvas></div>
+            </div>
+
+            <div class="{{ $panel }}">
+                <h2 class="mb-1 text-base font-semibold">Payments & Pick-up</h2>
+                <p class="mb-3 text-sm text-muted">How bags were paid and how fast customers came back.</p>
+                <dl class="divide-y divide-border text-sm dark:divide-gray-800">
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">Cash</dt><dd class="font-semibold" x-text="data.analytics.baggage.cash"></dd></div>
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">GCash</dt><dd class="font-semibold" x-text="data.analytics.baggage.gcash"></dd></div>
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">Bags released</dt><dd class="font-semibold" x-text="data.analytics.baggage.released"></dd></div>
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">Picked up on time</dt><dd class="font-semibold" x-text="pct(data.analytics.baggage.on_time_rate)"></dd></div>
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">Average storage time</dt><dd class="font-semibold" x-text="data.analytics.baggage.average_storage"></dd></div>
+                    <div class="flex justify-between gap-3 py-2.5"><dt class="text-muted">Longest storage</dt><dd class="font-semibold" x-text="data.analytics.baggage.longest_storage"></dd></div>
+                </dl>
+            </div>
+        </div>
+
+        <div class="{{ $tableWrap }}">
+            <div class="border-b border-border px-4 py-3 dark:border-gray-800">
+                <h2 class="text-base font-semibold">At the Counter Now</h2>
+                <p class="text-sm text-muted">Bags not yet released, soonest due first. Includes bags from earlier days.</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead class="{{ $thead }}">
+                        <tr>
+                            <th class="px-4 py-3">Tag</th>
+                            <th class="px-4 py-3">Branch</th>
+                            <th class="px-4 py-3">Size</th>
+                            <th class="px-4 py-3">Deposited</th>
+                            <th class="px-4 py-3">Due</th>
+                            <th class="px-4 py-3">Time Left</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border dark:divide-gray-800">
+                        <template x-for="row in data.analytics.baggage.at_counter" :key="'counter-' + row.id">
+                            <tr>
+                                <td class="px-4 py-3 font-semibold" x-text="'#' + row.tag"></td>
+                                <td class="px-4 py-3" x-text="row.branch"></td>
+                                <td class="px-4 py-3" x-text="row.size"></td>
+                                <td class="px-4 py-3 whitespace-nowrap" x-text="row.deposited_at"></td>
+                                <td class="px-4 py-3 whitespace-nowrap" x-text="row.due_at"></td>
+                                <td class="px-4 py-3 whitespace-nowrap font-semibold" style="font-variant-numeric:tabular-nums" :class="bagOverdue(row) ? 'text-red-600' : 'text-amber-700'" x-text="bagCountdown(row)"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="data.analytics.baggage.at_counter.length === 0">
+                            <td colspan="6" class="px-4 py-8 text-center text-muted">No bags at the counter right now.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="{{ $tableWrap }}">
+            <div class="border-b border-border px-4 py-3 dark:border-gray-800">
+                <h2 class="text-base font-semibold">All Baggage in This Period</h2>
+                <p class="text-sm text-muted">Every bag deposited in the selected dates, newest first<span x-show="data.analytics.baggage.list_truncated"> (latest 300 shown)</span>.</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead class="{{ $thead }}">
+                        <tr>
+                            <th class="px-4 py-3">Tag</th>
+                            <th class="px-4 py-3">Branch</th>
+                            <th class="px-4 py-3">Size</th>
+                            <th class="px-4 py-3">Amount</th>
+                            <th class="px-4 py-3">Deposited</th>
+                            <th class="px-4 py-3">Released</th>
+                            <th class="px-4 py-3">Stored For</th>
+                            <th class="px-4 py-3">Status</th>
+                            <th class="px-4 py-3">Staff</th>
+                            <th class="px-4 py-3">Sale</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border dark:divide-gray-800">
+                        <template x-for="row in data.analytics.baggage.list" :key="'bag-' + row.id">
+                            <tr>
+                                <td class="px-4 py-3 font-semibold" x-text="'#' + row.tag"></td>
+                                <td class="px-4 py-3" x-text="row.branch"></td>
+                                <td class="px-4 py-3">
+                                    <span x-text="row.size"></span>
+                                    <span x-show="row.notes" class="block text-xs text-muted" x-text="row.notes"></span>
+                                </td>
+                                <td class="px-4 py-3 whitespace-nowrap"><span x-text="row.amount"></span> <span class="text-xs text-muted" x-text="row.payment_type"></span></td>
+                                <td class="px-4 py-3 whitespace-nowrap" x-text="row.deposited_at"></td>
+                                <td class="px-4 py-3 whitespace-nowrap" x-text="row.released_at || '-'"></td>
+                                <td class="px-4 py-3 whitespace-nowrap" x-text="row.stored_for"></td>
+                                <td class="px-4 py-3"><span class="inline-flex rounded-md border px-2 py-0.5 text-xs font-semibold" :class="{{ $toneClasses }}" x-text="row.status"></span></td>
+                                <td class="px-4 py-3 text-xs text-muted">
+                                    <span x-text="'In: ' + (row.deposited_by || '-')"></span>
+                                    <span x-show="row.released_by" class="block" x-text="'Out: ' + row.released_by"></span>
+                                </td>
+                                <td class="px-4 py-3 text-xs">
+                                    <a x-show="row.job_order_url" :href="row.job_order_url" class="text-primary hover:underline" x-text="row.job_order_number"></a>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="data.analytics.baggage.list.length === 0">
+                            <td colspan="10" class="px-4 py-10 text-center text-muted">No bags deposited in this period.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </section>
+    @endif
+
     {{-- ============ AUDIT & STAFF ============ --}}
     @if($canSeeAudit)
     <section x-show="tab === 'audit'" x-cloak class="space-y-4" role="tabpanel">
@@ -1076,6 +1286,7 @@ function dashboardPage({ fetchUrl, initialData, initialDateRange, hasExplicitRan
         deductions: ['deductions', 'expenseCategories'],
         balances: ['financial', 'aging'],
         operations: ['status', 'cycles'],
+        baggage: ['baggageSizes', 'baggageDaily', 'baggageHourly'],
         audit: [],
     };
 
@@ -1090,8 +1301,12 @@ function dashboardPage({ fetchUrl, initialData, initialDateRange, hasExplicitRan
         inFlight: false,
         picker: null,
         presets: [],
+        clock: Date.now(),
 
         init() {
+            // Live countdown for bags at the Baggage Counter.
+            window.setInterval(() => { this.clock = Date.now(); }, 1000);
+
             const hashTab = window.location.hash.replace('#', '');
             if (tabs.includes(hashTab)) this.tab = hashTab;
 
@@ -1148,6 +1363,18 @@ function dashboardPage({ fetchUrl, initialData, initialDateRange, hasExplicitRan
 
         pct(value) {
             return value === null || value === undefined ? '—' : `${value}%`;
+        },
+
+        bagOverdue(row) {
+            return Boolean(row?.due_iso) && this.clock > new Date(row.due_iso).getTime();
+        },
+
+        bagCountdown(row) {
+            if (!row?.due_iso) return '';
+            const diff = new Date(row.due_iso).getTime() - this.clock;
+            const total = Math.floor(Math.abs(diff) / 1000);
+            const text = `${Math.floor(total / 3600)}h ${String(Math.floor((total % 3600) / 60)).padStart(2, '0')}m ${String(total % 60).padStart(2, '0')}s`;
+            return diff >= 0 ? `${text} left` : `Overdue ${text}`;
         },
 
         bar(value) {
@@ -1264,6 +1491,9 @@ function dashboardPage({ fetchUrl, initialData, initialDateRange, hasExplicitRan
                 categorySales: { ref: 'categorySalesChart', ...bar('category_sales', true) },
                 aging: { ref: 'agingChart', ...bar('receivables_aging') },
                 cycles: { ref: 'cyclesChart', ...bar('cycles', false, false) },
+                baggageSizes: { ref: 'baggageSizesChart', ...pie('baggage_sizes') },
+                baggageDaily: { ref: 'baggageDailyChart', ...bar('baggage_daily') },
+                baggageHourly: { ref: 'baggageHourlyChart', ...bar('baggage_hourly', false, false) },
                 trend7: {
                     ref: 'trend7Chart',
                     type: 'bar',

@@ -101,6 +101,7 @@ class DefaultLaundryServices
         LaundryService::where('branch_id', $branch->id)
             ->whereNull('add_on_inventory_id') // Add Ons / Sell Products are managed from Inventory (see InventoryAddOns).
             ->whereNull('sale_inventory_id')
+            ->whereNull('baggage_size') // Baggage Counter rates (see BaggageCounter).
             ->whereNotIn('name', $names)
             ->delete();
 

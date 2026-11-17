@@ -19,6 +19,7 @@ class Branch extends Model
         'longitude',
         'attendance_radius_meters',
         'machine_count',
+        'baggage_tag_count',
         'subscription_price',
         'qr_pay_url',
         'is_active',
@@ -29,6 +30,7 @@ class Branch extends Model
         'longitude' => 'decimal:7',
         'attendance_radius_meters' => 'integer',
         'machine_count' => 'integer',
+        'baggage_tag_count' => 'integer',
         'subscription_price' => 'decimal:2',
         'is_active' => 'boolean',
     ];

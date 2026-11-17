@@ -337,6 +337,9 @@ class DashboardController extends Controller
                 'payment_status' => $analytics['orders_breakdown']['chart'],
                 'receivables_aging' => $analytics['receivables_aging']['chart'],
                 'cycles' => $analytics['cycles']['chart'],
+                'baggage_sizes' => $analytics['baggage']['charts']['sizes'],
+                'baggage_daily' => $analytics['baggage']['charts']['daily'],
+                'baggage_hourly' => $analytics['baggage']['charts']['hourly'],
                 'expense_categories' => $insights['charts']['expense_categories'],
                 'deductions_breakdown' => $insights['charts']['deductions_breakdown'],
                 'financial_snapshot' => [

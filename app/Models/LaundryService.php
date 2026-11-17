@@ -9,7 +9,7 @@ class LaundryService extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['branch_id', 'service_category_id', 'name', 'report_category', 'add_on_inventory_id', 'sale_inventory_id', 'pricing_type', 'price', 'is_active'];
+    protected $fillable = ['branch_id', 'service_category_id', 'name', 'report_category', 'add_on_inventory_id', 'sale_inventory_id', 'baggage_size', 'pricing_type', 'price', 'is_active'];
 
     protected $casts = ['price' => 'decimal:2', 'is_active' => 'boolean'];
 
