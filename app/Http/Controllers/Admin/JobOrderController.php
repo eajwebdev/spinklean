@@ -277,7 +277,8 @@ class JobOrderController extends Controller
             'branch_id' => ['required', 'exists:branches,id'],
             'processing_branch_id' => ['nullable', 'exists:branches,id'],
             'tag_number' => ['nullable', 'string', 'max:100'],
-            'customer_id' => ['required', 'exists:customers,id'],
+            // Optional only for product sales; those fall back to the branch's Walk-in customer.
+            'customer_id' => ['nullable', 'exists:customers,id'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.laundry_service_id' => ['nullable', 'exists:laundry_services,id'],
             'items.*.service_preset_id' => ['nullable', 'exists:service_presets,id'],
@@ -301,34 +302,6 @@ class JobOrderController extends Controller
 
         $originBranch = Branch::query()->findOrFail($validated['branch_id']);
 
-        if ($originBranch->isNoMachine()) {
-            if (empty($validated['processing_branch_id'])) {
-                throw ValidationException::withMessages([
-                    'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
-                ]);
-            }
-
-            // No-machine branches get an auto-generated daily tag inside the transaction.
-            $validated['tag_number'] = null;
-        } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
-            $validated['tag_number'] = TagValidator::validate($validated['tag_number']);
-        } else {
-            $validated['tag_number'] = null;
-        }
-
-        $validated['processing_branch_id'] = $this->resolveProcessingBranchId($originBranch, $validated['processing_branch_id'] ?? null, $user);
-
-        $customerBelongsToBranch = Customer::query()
-            ->whereKey($validated['customer_id'])
-            ->where('branch_id', $validated['branch_id'])
-            ->exists();
-
-        if (! $customerBelongsToBranch) {
-            throw ValidationException::withMessages([
-                'customer_id' => 'Please choose a customer from the selected branch.',
-            ]);
-        }
-
         $validated['items'] = $this->expandPresetCartItems($validated['items'], (int) $validated['branch_id']);
 
         $serviceIds = collect($validated['items'])->pluck('laundry_service_id')->unique()->values();
@@ -344,8 +317,59 @@ class JobOrderController extends Controller
             ]);
         }
 
+        // A cart with only add-on products (Ariel, Downy, plastic bottles, ...) is a product sale:
+        // sold from this branch's own stock, never sent to a processing branch, released right away.
+        $isProductSale = $this->isProductSaleCart($selectedServices);
+
+        if ($isProductSale) {
+            $validated['tag_number'] = null;
+            $validated['processing_branch_id'] = (int) $originBranch->id;
+        } else {
+            if ($originBranch->isNoMachine()) {
+                if (empty($validated['processing_branch_id'])) {
+                    throw ValidationException::withMessages([
+                        'processing_branch_id' => 'Please select an active machine-equipped branch for processing.',
+                    ]);
+                }
+
+                // No-machine branches get an auto-generated daily tag inside the transaction.
+                $validated['tag_number'] = null;
+            } elseif (! empty(trim((string) ($validated['tag_number'] ?? '')))) {
+                $validated['tag_number'] = TagValidator::validate($validated['tag_number']);
+            } else {
+                $validated['tag_number'] = null;
+            }
+
+            $validated['processing_branch_id'] = $this->resolveProcessingBranchId($originBranch, $validated['processing_branch_id'] ?? null, $user);
+        }
+
+        $usesWalkInCustomer = empty($validated['customer_id']);
+
+        if ($usesWalkInCustomer && ! $isProductSale) {
+            throw ValidationException::withMessages([
+                'customer_id' => 'Please select a customer.',
+            ]);
+        }
+
+        if (! $usesWalkInCustomer) {
+            $customerBelongsToBranch = Customer::query()
+                ->whereKey($validated['customer_id'])
+                ->where('branch_id', $validated['branch_id'])
+                ->exists();
+
+            if (! $customerBelongsToBranch) {
+                throw ValidationException::withMessages([
+                    'customer_id' => 'Please choose a customer from the selected branch.',
+                ]);
+            }
+        }
+
         $createdOrder = null;
-        $response = DB::transaction(function () use ($request, $validated, $selectedServices, $user, $originBranch, &$createdOrder) {
+        $response = DB::transaction(function () use ($request, $validated, $selectedServices, $user, $originBranch, $isProductSale, $usesWalkInCustomer, &$createdOrder) {
+            if ($usesWalkInCustomer) {
+                $validated['customer_id'] = $this->walkInCustomer($originBranch)->id;
+            }
+
             $settings = SystemSetting::current();
             $subtotal = collect($validated['items'])->sum(fn ($item) => (float) $item['quantity'] * (float) $item['unit_price']);
             $discount = min((float) ($validated['discount'] ?? 0), $subtotal);
@@ -355,7 +379,7 @@ class JobOrderController extends Controller
             $paymentType = $validated['payment_type'] ?? 'cash';
             $customer = Customer::query()->find($validated['customer_id']);
 
-            if ($originBranch->isNoMachine()) {
+            if ($originBranch->isNoMachine() && ! $isProductSale) {
                 // Serialize tag generation across no-machine branches so two cashiers can't get the same number.
                 Branch::query()->whereIn('branch_type', ['pickup_dropoff', 'no_machine'])->orderBy('id')->lockForUpdate()->get();
                 $validated['tag_number'] = TagValidator::nextDailyTag();
@@ -369,6 +393,21 @@ class JobOrderController extends Controller
                 $paid = $total;
             }
 
+            // Product sales are handed over immediately, so they follow the same unpaid
+            // rule as releasing laundry: walk-ins pay in full, others within their unpaid limit.
+            if ($isProductSale && ! $isPoTransaction) {
+                $unpaid = round($total - $paid, 2);
+                $unpaidLimit = $usesWalkInCustomer ? 0.0 : (float) ($customer?->unpaid_limit ?? 0);
+
+                if ($unpaid > $unpaidLimit) {
+                    throw ValidationException::withMessages([
+                        'paid_amount' => $usesWalkInCustomer
+                            ? 'Walk-in product sales must be paid in full.'
+                            : 'Product sales are released right away. The unpaid balance of ₱'.number_format($unpaid, 2).' is over this customer\'s unpaid limit, so collect payment first.',
+                    ]);
+                }
+            }
+
             $order = JobOrder::create([
                 'branch_id' => $validated['branch_id'],
                 'processing_branch_id' => $validated['processing_branch_id'],
@@ -378,9 +417,10 @@ class JobOrderController extends Controller
                 'created_by' => $user->id,
                 'job_order_number' => $this->nextJobOrderNumber((int) $validated['branch_id']),
                 'tag_number' => $validated['tag_number'],
-                'status' => 'pending',
-                'transaction_type' => $validated['transaction_type'] ?? 'walk_in',
-                'is_rush' => (bool) ($validated['is_rush'] ?? false),
+                'status' => $isProductSale ? 'completed' : 'pending',
+                'transaction_type' => $isProductSale ? 'walk_in' : ($validated['transaction_type'] ?? 'walk_in'),
+                'is_product_sale' => $isProductSale,
+                'is_rush' => ! $isProductSale && (bool) ($validated['is_rush'] ?? false),
                 'subtotal' => $subtotal,
                 'discount' => $discount,
                 'tax' => $tax,
@@ -388,6 +428,8 @@ class JobOrderController extends Controller
                 'paid_amount' => $paid,
                 'balance' => $total - $paid,
                 'notes' => $validated['notes'] ?? null,
+                'completed_at' => $isProductSale ? now() : null,
+                'released_at' => $isProductSale ? now() : null,
             ]);
 
             foreach ($validated['items'] as $item) {
@@ -418,7 +460,7 @@ class JobOrderController extends Controller
                 ]);
             }
 
-            if (! $order->branch?->isPickupDropoff()) {
+            if ($isProductSale || ! $order->branch?->isPickupDropoff()) {
                 $this->deductInventoryForOrder($order, $validated['items'], $user->id);
                 $order->update(['inventory_deducted_at' => now()]);
             }
@@ -470,9 +512,15 @@ class JobOrderController extends Controller
                 'job_order_number' => $order->job_order_number,
                 'total' => $order->total,
                 'is_rush' => $order->is_rush,
+                'is_product_sale' => $order->is_product_sale,
             ], $order->branch_id);
 
             $createdOrder = $order;
+
+            if ($isProductSale) {
+                return redirect()->route('admin.job-orders.index')
+                    ->with('success', "Product sale {$order->job_order_number} completed. Stock was deducted from {$originBranch->name}.");
+            }
 
             return redirect()->route('admin.job-orders.index')->with('success', $order->tag_number && $originBranch->isNoMachine()
                 ? "Job order created successfully. Tag #{$order->tag_number}."
@@ -480,7 +528,8 @@ class JobOrderController extends Controller
         });
 
         // The order-received SMS is opt-in: it only goes out when the cashier ticks "Send SMS".
-        if ($request->boolean('send_sms') && $createdOrder) {
+        // Product sales are handed over on the spot, so there is no "laundry received" SMS.
+        if ($request->boolean('send_sms') && $createdOrder && ! $createdOrder->is_product_sale) {
             SmsNotifier::jobOrderReceived($createdOrder);
         }
 
@@ -545,6 +594,20 @@ class JobOrderController extends Controller
             ]);
         }
 
+        if ($jobOrder->is_product_sale) {
+            if (! $this->isProductSaleCart($selectedServices)) {
+                throw ValidationException::withMessages([
+                    'items' => 'A product sale can only contain add-on products. Create a new job order for laundry services.',
+                ]);
+            }
+
+            // Product sales are always completed, stay at their branch and carry no tag.
+            $validated['status'] = 'completed';
+            $validated['tag_number'] = $jobOrder->tag_number;
+            $validated['processing_branch_id'] = (int) $jobOrder->branch_id;
+            $validated['is_rush'] = false;
+        }
+
         if ($message = $this->dropoffStatusChangeError($request, $jobOrder, $validated['status'])) {
             return back()->with('error', $message)->withErrors(['status' => $message])->withInput();
         }
@@ -552,7 +615,9 @@ class JobOrderController extends Controller
         return DB::transaction(function () use ($request, $validated, $selectedServices, $jobOrder) {
             $previousProcessingBranchId = (int) ($jobOrder->processing_branch_id ?: $jobOrder->branch_id);
             $inventoryWasDeducted = (bool) $jobOrder->inventory_deducted_at;
-            $validated['processing_branch_id'] = $this->resolveProcessingBranchId($jobOrder->branch, $validated['processing_branch_id'] ?? null, $request->user());
+            $validated['processing_branch_id'] = $jobOrder->is_product_sale
+                ? (int) $jobOrder->branch_id
+                : $this->resolveProcessingBranchId($jobOrder->branch, $validated['processing_branch_id'] ?? null, $request->user());
             $processingBranchChanged = (int) $validated['processing_branch_id'] !== $previousProcessingBranchId;
             $settings = SystemSetting::current();
             $subtotal = collect($validated['items'])->sum(fn ($item) => (float) $item['quantity'] * (float) $item['unit_price']);
@@ -641,7 +706,7 @@ class JobOrderController extends Controller
             $jobOrder->update($orderUpdates);
 
             $shouldDeductInventory = $validated['status'] !== 'cancelled'
-                && (! $jobOrder->branch?->isPickupDropoff() || ($inventoryWasDeducted && ! $processingBranchChanged));
+                && ($jobOrder->is_product_sale || ! $jobOrder->branch?->isPickupDropoff() || ($inventoryWasDeducted && ! $processingBranchChanged));
 
             if ($shouldDeductInventory) {
                 $this->deductInventoryForOrder($jobOrder, $validated['items'], $request->user()?->id);
@@ -730,7 +795,12 @@ class JobOrderController extends Controller
     {
         $this->authorizeJobOrder($request, $jobOrder);
 
-        abort_if(in_array($jobOrder->status, ['completed', 'cancelled'], true), 422, 'Completed or cancelled job orders cannot be cancelled.');
+        // A product sale is completed the moment it is saved, so it can still be voided (stock is returned).
+        abort_if(
+            $jobOrder->status === 'cancelled' || ($jobOrder->status === 'completed' && ! $jobOrder->is_product_sale),
+            422,
+            'Completed or cancelled job orders cannot be cancelled.'
+        );
 
         DB::transaction(function () use ($request, $jobOrder): void {
             $paymentIds = Payment::withoutGlobalScope('financially_active')
@@ -750,6 +820,7 @@ class JobOrderController extends Controller
                 'status' => 'cancelled',
                 'balance' => 0,
                 'completed_at' => null,
+                'released_at' => $jobOrder->is_product_sale ? null : $jobOrder->released_at,
                 'inventory_deducted_at' => null,
             ]);
 
@@ -1079,6 +1150,7 @@ class JobOrderController extends Controller
 
         $loads = JobOrder::query()
             ->where('status', '!=', 'cancelled')
+            ->where('is_product_sale', false)
             ->whereBetween('created_at', [today()->startOfDay(), today()->endOfDay()])
             ->whereIn(DB::raw('COALESCE(processing_branch_id, branch_id)'), $branches->pluck('id'))
             ->groupBy(DB::raw('COALESCE(processing_branch_id, branch_id)'))
@@ -1094,6 +1166,22 @@ class JobOrderController extends Controller
             $branch->setAttribute('customers_today', (int) ($load->customers_today ?? 0));
             $branch->setAttribute('orders_today', (int) ($load->orders_today ?? 0));
         });
+    }
+
+    /** True when every item in the cart is an add-on product (no laundry service at all). */
+    private function isProductSaleCart($services): bool
+    {
+        return $services->isNotEmpty()
+            && $services->every(fn (LaundryService $service) => $service->isAddOn());
+    }
+
+    /** The shared "Walk-in Customer" of a branch, used for product sales without a named customer. */
+    private function walkInCustomer(Branch $branch): Customer
+    {
+        return Customer::query()->firstOrCreate(
+            ['branch_id' => $branch->id, 'name' => 'Walk-in Customer'],
+            ['billing_type' => 'regular', 'unpaid_limit' => 0, 'is_active' => true]
+        );
     }
 
     private function resolveProcessingBranchId(Branch $originBranch, ?int $processingBranchId, User $user): int

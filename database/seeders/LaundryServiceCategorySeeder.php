@@ -16,8 +16,7 @@ class LaundryServiceCategorySeeder extends Seeder
             ['name' => 'Extra Services', 'visibility' => 'all', 'sort_order' => 4],
             ['name' => 'Special Items',  'visibility' => 'all', 'sort_order' => 5],
             ['name' => 'Establishment',  'visibility' => 'all', 'sort_order' => 6],
-            ['name' => 'For Sale Items', 'visibility' => 'all', 'sort_order' => 7],
-            ['name' => 'Add Ons',        'visibility' => 'all', 'sort_order' => 8],
+            ['name' => 'Add Ons',        'visibility' => 'all', 'sort_order' => 7],
         ];
 
         foreach ($categories as $category) {

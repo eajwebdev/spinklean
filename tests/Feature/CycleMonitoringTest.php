@@ -2121,6 +2121,15 @@ class CycleMonitoringTest extends TestCase
             'selling_price' => 15,
         ]);
         $service = \App\Support\InventoryAddOns::sync($downy);
+        // Laundry in the cart too: an add-on-only cart would be a product sale and stay at the branch.
+        $wash = \App\Models\LaundryService::query()->create([
+            'branch_id' => $dropoffBranch->id,
+            'name' => 'Wash 7kg',
+            'report_category' => 'small',
+            'pricing_type' => 'load',
+            'price' => 60,
+            'is_active' => true,
+        ]);
         $customer = $this->createCustomer($dropoffBranch);
         $manager = User::factory()->create([
             'role' => 'branch_manager',
@@ -2139,6 +2148,11 @@ class CycleMonitoringTest extends TestCase
                 'processing_branch_id' => $productionBranch->id,
                 'customer_id' => $customer->id,
                 'items' => [[
+                    'laundry_service_id' => $wash->id,
+                    'description' => $wash->name,
+                    'quantity' => 1,
+                    'unit_price' => 60,
+                ], [
                     'laundry_service_id' => $service->id,
                     'description' => $service->name,
                     'quantity' => 2,

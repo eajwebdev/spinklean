@@ -5,6 +5,7 @@
     $pageTitle = $isEditing ? 'Edit Job Order' : (in_array(auth()->user()->role, ['branch_manager', 'cashier'], true) ? 'Cashier POS' : 'New Job Order');
     $initialState = [
         'isEditing' => $isEditing,
+        'isProductSale' => $isEditing && (bool) $jobOrder->is_product_sale,
         'initialItems' => $isEditing ? $initialItems : [],
         'selectedCustomerId' => (string) old('customer_id', $selectedCustomerId ?? ''),
         'processingBranchId' => (string) old('processing_branch_id', $isEditing ? ($jobOrder->processing_branch_id ?: $jobOrder->branch_id) : ''),
@@ -57,6 +58,13 @@
                             <span data-lucide="store" class="h-3.5 w-3.5 text-primary"></span>
                             <span class="text-xs font-medium text-primary">{{ $branches->firstWhere('id', (int) $branchId)?->name }}</span>
                         </div>
+                        @if($jobOrder->is_product_sale)
+                            <input type="hidden" name="status" value="completed">
+                            <div class="flex items-center gap-2 rounded-md bg-primary/10 px-3 py-1">
+                                <span data-lucide="shopping-bag" class="h-3.5 w-3.5 text-primary"></span>
+                                <span class="text-xs font-medium text-primary">Product Sale · Completed</span>
+                            </div>
+                        @else
                         <div class="flex items-center gap-2">
                             <span data-lucide="activity" class="h-3.5 w-3.5 text-muted"></span>
                             <select name="status" class="h-8 rounded-md border-0 bg-smoke px-2 text-xs font-medium dark:bg-gray-800" required>
@@ -65,6 +73,7 @@
                                 @endforeach
                             </select>
                         </div>
+                        @endif
                     @elseif(in_array(auth()->user()->role, ['super_admin', 'admin'], true))
                         <div class="flex items-center gap-2">
                             <span data-lucide="store" class="h-3.5 w-3.5 text-muted"></span>
@@ -87,8 +96,12 @@
                         $currentSelectedBranch = $branches->firstWhere('id', (int) $branchId);
                         $isCurrentDropoff = $currentSelectedBranch?->isNoMachine();
                     @endphp
+                    <div x-cloak x-show="isProductSale" class="flex items-center gap-2 rounded-md bg-primary/10 px-3 py-1">
+                        <span data-lucide="shopping-bag" class="h-3.5 w-3.5 text-primary"></span>
+                        <span class="text-xs font-medium text-primary">Product sale · sold from this branch, no transfer</span>
+                    </div>
                     @if($userCanChoose || $isCurrentDropoff)
-                        <div class="flex flex-col gap-1">
+                        <div x-show="!isProductSale" class="flex flex-col gap-1">
                             <span class="text-[10px] font-medium" :class="needsProcessingBranch ? 'text-red-600' : 'text-muted'">
                                 Receiving Production Branch<span x-show="isNoMachineBranch" class="text-red-600"> *</span>
                             </span>
@@ -100,7 +113,7 @@
                                     x-model="processingBranchId"
                                     class="h-8 rounded-md px-2 text-xs font-medium"
                                     :class="needsProcessingBranch ? 'border-2 border-red-500 bg-red-50 text-red-700 dark:bg-red-950/40 dark:text-red-300' : 'border-0 bg-smoke dark:bg-gray-800'"
-                                    :required="isNoMachineBranch"
+                                    :required="isNoMachineBranch && !isProductSale"
                                 >
                                     <template x-if="isNoMachineBranch">
                                         <option value="">-- Select processing branch --</option>
@@ -126,7 +139,7 @@
                         </div>
                     @else
                         <input type="hidden" name="processing_branch_id" value="{{ $branchId }}">
-                        <div class="flex items-center gap-1.5">
+                        <div x-show="!isProductSale" class="flex items-center gap-1.5">
                             <span data-lucide="git-branch" class="h-3.5 w-3.5 text-muted"></span>
                             <span class="text-xs text-muted">{{ $currentSelectedBranch?->name }}</span>
                         </div>
@@ -147,7 +160,7 @@
                             x-model="customerSearch"
                             @focus="customerOpen = true"
                             @input="selectedCustomerId = ''; customerOpen = true"
-                            placeholder="Search or select customer..."
+                            :placeholder="isProductSale && !isEditing ? 'Walk-in (optional) - search customer...' : 'Search or select customer...'"
                             class="min-w-0 flex-1 bg-transparent text-sm outline-none"
                             autocomplete="off"
                         >
@@ -176,21 +189,21 @@
                 <div>
                     <div class="flex items-center justify-between mb-1">
                         <label class="block text-[10px] font-medium text-muted">Laundry Tag #</label>
-                        <span x-show="isNoMachineBranch" class="text-[10px] font-medium text-primary">Auto</span>
-                        <span x-show="!isNoMachineBranch && tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
-                        <span x-show="!isNoMachineBranch && tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
+                        <span x-show="isNoMachineBranch && !isProductSale" class="text-[10px] font-medium text-primary">Auto</span>
+                        <span x-show="!isNoMachineBranch && !isProductSale && tagStatus === 'available'" class="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">Available</span>
+                        <span x-show="!isNoMachineBranch && !isProductSale && tagStatus === 'taken'" class="text-[10px] font-medium text-red-600 dark:text-red-400">Unavailable</span>
                     </div>
-                    <div x-show="isNoMachineBranch" class="flex h-9 w-full items-center gap-2 rounded-md border border-border bg-smoke px-3 text-sm font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
+                    <div x-show="isNoMachineBranch || isProductSale" class="flex h-9 w-full items-center gap-2 rounded-md border border-border bg-smoke px-3 text-sm font-medium text-muted dark:border-gray-800 dark:bg-gray-950">
                         <span data-lucide="tag" class="h-4 w-4 shrink-0"></span>
-                        <span x-text="isEditing ? (tagNumber || 'Not assigned') : 'Auto-generated on save'"></span>
+                        <span x-text="isProductSale ? 'Not needed for product sale' : (isEditing ? (tagNumber || 'Not assigned') : 'Auto-generated on save')"></span>
                     </div>
-                    <div x-show="!isNoMachineBranch" class="relative">
+                    <div x-show="!isNoMachineBranch && !isProductSale" class="relative">
                         <input
                             type="text"
                             name="tag_number"
                             x-model="tagNumber"
                             @input.debounce.300ms="checkTagAvailability()"
-                            :disabled="isNoMachineBranch"
+                            :disabled="isNoMachineBranch || isProductSale"
                             placeholder="e.g. TAG-001 or 12"
                             class="h-9 w-full rounded-md border bg-white px-3 pr-8 text-sm shadow-sm dark:border-gray-800 dark:bg-gray-950 font-medium"
                             :class="tagStatus === 'taken' ? 'border-red-500 focus:border-red-500 ring-1 ring-red-500' : (tagStatus === 'available' ? 'border-emerald-500 focus:border-emerald-500' : 'border-border')"
@@ -202,7 +215,7 @@
                             <span x-show="!tagChecking && tagStatus === 'taken'" data-lucide="alert-circle" class="h-4 w-4 text-red-500"></span>
                         </div>
                     </div>
-                    <p x-show="!isNoMachineBranch && tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
+                    <p x-show="!isNoMachineBranch && !isProductSale && tagMessage && tagStatus === 'taken'" class="mt-1 text-[11px] text-red-500" x-text="tagMessage"></p>
                     @error('tag_number')
                         <p class="mt-1 text-[11px] text-red-500">{{ $message }}</p>
                     @enderror
@@ -387,13 +400,16 @@
                     </div>
 
                     <!-- Save Button -->
-                    <button type="button" @click="showPaymentPanel = true; refreshIcons()" :disabled="items.length === 0 || !selectedCustomerId || needsProcessingBranch" class="mt-3 h-10 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <p x-cloak x-show="isProductSale && !isEditing" class="mt-3 rounded-md bg-primary/10 px-3 py-2 text-[11px] font-medium text-primary">
+                        Products only: sold from this branch's stock and completed right away. No transfer or tag needed.
+                    </p>
+                    <button type="button" @click="openPaymentPanel()" :disabled="!canCheckout" class="mt-3 h-10 w-full rounded-lg bg-primary text-sm font-semibold text-white transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed">
                         <span x-show="items.length === 0">Add items to continue</span>
-                        <span x-show="items.length > 0 && !selectedCustomerId">Select a customer</span>
-                        <span x-show="items.length > 0 && selectedCustomerId && needsProcessingBranch">Select processing branch</span>
-                        <span x-show="items.length > 0 && selectedCustomerId && !needsProcessingBranch" class="flex items-center justify-center gap-2">
+                        <span x-show="items.length > 0 && !hasCustomerOrWalkIn">Select a customer</span>
+                        <span x-show="items.length > 0 && hasCustomerOrWalkIn && needsProcessingBranch">Select processing branch</span>
+                        <span x-show="canCheckout" class="flex items-center justify-center gap-2">
                             <span :data-lucide="isEditing ? 'save' : 'credit-card'" class="h-4 w-4"></span>
-                            <span x-text="isEditing ? 'Review Changes' : 'Proceed to Payment'"></span>
+                            <span x-text="isEditing ? 'Review Changes' : (isProductSale ? 'Proceed to Payment (Product Sale)' : 'Proceed to Payment')"></span>
                         </span>
                     </button>
                 </div>
@@ -449,7 +465,7 @@
                     <div x-show="!isEditing" class="space-y-2 pt-2">
                         <label class="text-xs font-medium text-muted">Payment Method</label>
                         <div class="grid grid-cols-2 gap-2">
-                            <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-border p-2.5 transition hover:border-primary/50 dark:border-gray-800" :class="paymentType === 'unpaid' ? 'border-primary bg-primary/5' : ''">
+                            <label x-show="!isWalkInProductSale" class="flex cursor-pointer items-center gap-2 rounded-lg border border-border p-2.5 transition hover:border-primary/50 dark:border-gray-800" :class="paymentType === 'unpaid' ? 'border-primary bg-primary/5' : ''">
                                 <input type="radio" name="payment_type" value="unpaid" x-model="paymentType" class="sr-only">
                                 <div class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-muted" :class="paymentType === 'unpaid' ? 'border-primary bg-primary' : ''">
                                     <span x-show="paymentType === 'unpaid'" class="h-2 w-2 rounded-full bg-white"></span>
@@ -482,7 +498,7 @@
                                 </div>
                             </label>
 
-                            <label class="flex cursor-pointer items-center gap-2 rounded-lg border border-border p-2.5 transition hover:border-primary/50 dark:border-gray-800" :class="paymentType === 'po' ? 'border-primary bg-primary/5' : ''">
+                            <label x-show="!isWalkInProductSale" class="flex cursor-pointer items-center gap-2 rounded-lg border border-border p-2.5 transition hover:border-primary/50 dark:border-gray-800" :class="paymentType === 'po' ? 'border-primary bg-primary/5' : ''">
                                 <input type="radio" name="payment_type" value="po" x-model="paymentType" class="sr-only">
                                 <div class="flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 border-muted" :class="paymentType === 'po' ? 'border-primary bg-primary' : ''">
                                     <span x-show="paymentType === 'po'" class="h-2 w-2 rounded-full bg-white"></span>
@@ -493,6 +509,7 @@
                                 </div>
                             </label>
                         </div>
+                        <p x-show="isWalkInProductSale" class="text-[11px] text-muted">Walk-in product sales are paid in full. Select a customer to charge it to an account.</p>
                     </div>
 
                     <!-- Reference Number Field (shown for GCash and PO) -->
@@ -501,8 +518,8 @@
                     </div>
                     
                     <!-- SMS Notification -->
-                    <label x-show="!isEditing" class="flex items-start gap-2 rounded-lg border border-border p-3 dark:border-gray-800" :class="canSendSms ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'">
-                        <input type="checkbox" name="send_sms" value="1" x-model="sendSms" :disabled="!canSendSms" class="mt-0.5 rounded border-border text-primary">
+                    <label x-show="!isEditing && !isProductSale" class="flex items-start gap-2 rounded-lg border border-border p-3 dark:border-gray-800" :class="canSendSms ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'">
+                        <input type="checkbox" name="send_sms" value="1" x-model="sendSms" :disabled="!canSendSms || isProductSale" class="mt-0.5 rounded border-border text-primary">
                         <span>
                             <span class="block text-sm font-medium">Send order received SMS</span>
                             <span class="block text-xs text-muted" x-text="smsAvailabilityMessage"></span>
@@ -512,7 +529,7 @@
 
                 <div class="mt-5 grid grid-cols-2 gap-3">
                     <button type="button" @click="showPaymentPanel = false" class="h-10 rounded-lg border border-border font-medium hover:bg-smoke dark:border-gray-800 dark:hover:bg-gray-950">Cancel</button>
-                    <button type="submit" class="h-10 rounded-lg bg-primary font-semibold text-white hover:opacity-90" x-text="isEditing ? 'Save Changes' : 'Confirm Order'"></button>
+                    <button type="submit" class="h-10 rounded-lg bg-primary font-semibold text-white hover:opacity-90" x-text="isEditing ? 'Save Changes' : (isProductSale ? 'Complete Sale' : 'Confirm Order')"></button>
                 </div>
             </div>
         </div>
@@ -611,8 +628,46 @@ function posPage(branches, processingBranches, services, customers, serviceCateg
             const branch = this.selectedBranch;
             return Boolean(branch && (branch.branch_type === 'pickup_dropoff' || (branch.machine_count ?? 0) === 0));
         },
+        productSaleLocked: Boolean(initialState.isProductSale),
+        // A cart holding only add-on products (Ariel, Downy, bottles, ...) is a product sale:
+        // sold from this branch's stock, no processing branch, no tag, completed right away.
+        get isProductSale() {
+            if (this.isEditing) {
+                return this.productSaleLocked;
+            }
+            return this.items.length > 0 && this.items.every(item => {
+                if (item.type !== 'preset') {
+                    return this.isAddOn(item);
+                }
+                const preset = this.servicePresets.find(p => String(p.id) === String(item.id));
+                return Boolean(preset && preset.items.length > 0 && preset.items.every(presetItem => this.isAddOn(presetItem)));
+            });
+        },
+        get isWalkInProductSale() {
+            return this.isProductSale && !this.isEditing && !this.selectedCustomerId;
+        },
+        get hasCustomerOrWalkIn() {
+            return Boolean(this.selectedCustomerId) || this.isWalkInProductSale;
+        },
+        get canCheckout() {
+            return this.items.length > 0 && this.hasCustomerOrWalkIn && !this.needsProcessingBranch;
+        },
+        openPaymentPanel() {
+            if (!this.canCheckout) {
+                return;
+            }
+            // Walk-in product sales are paid on the spot; never leave them as Unpaid/PO.
+            if (this.isWalkInProductSale && ['unpaid', 'po'].includes(this.paymentType)) {
+                this.paymentType = 'cash';
+            }
+            if (this.isWalkInProductSale && Number(this.paid) < Number(this.total)) {
+                this.paid = Number(this.total);
+            }
+            this.showPaymentPanel = true;
+            this.refreshIcons();
+        },
         get needsProcessingBranch() {
-            return !this.isEditing && this.isNoMachineBranch && !this.processingBranchId;
+            return !this.isEditing && !this.isProductSale && this.isNoMachineBranch && !this.processingBranchId;
         },
         get availableProcessingBranches() {
             return this.processingBranches.filter(b => String(b.id) !== String(this.branchId) && (b.machine_count ?? 0) > 0);

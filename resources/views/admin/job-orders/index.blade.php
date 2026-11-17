@@ -137,6 +137,9 @@
                             @if($order->is_rush)
                                 <span class="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush</span>
                             @endif
+                            @if($order->is_product_sale)
+                                <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Product Sale</span>
+                            @endif
                         </td>
                         <td class="px-4 py-3">
                             <p class="font-medium">{{ $order->created_at?->format('M d, Y') }}</p>
@@ -144,7 +147,9 @@
                         </td>
                         <td class="px-4 py-3">
                             <p>{{ $order->customer?->name }}</p>
-                            <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
+                            @unless($order->is_product_sale)
+                                <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
+                            @endunless
                         </td>
                         <td class="px-4 py-3">
                             <p class="font-medium">{{ $order->branch?->name }}</p>
@@ -284,6 +289,11 @@
                                     <span data-lucide="x" class="h-4 w-4"></span>
                                 </button>
                             @endunless
+                            @if($order->is_product_sale && $order->status === 'completed')
+                                <button type="button" @click="cancelOpen = {{ $order->id }}" title="Void product sale (returns stock)" aria-label="Void product sale" class="inline-flex h-8 w-8 items-center justify-center rounded-md border border-red-200 text-red-600 hover:bg-red-50">
+                                    <span data-lucide="x" class="h-4 w-4"></span>
+                                </button>
+                            @endif
                             @if(auth()->user()?->isAdmin())
                                 <form method="POST" action="{{ route('admin.job-orders.destroy', $order) }}" class="inline">
                                     @csrf

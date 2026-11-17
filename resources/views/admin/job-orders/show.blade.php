@@ -44,7 +44,12 @@
                     <p class="text-sm text-amber-600">Waiting for {{ $order->processingBranch->name }} to receive tag into production.</p>
                 @endif
             @endif
-            <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
+            @if($order->is_product_sale)
+                <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Product Sale</span>
+                <p class="text-sm text-muted">Add-on products sold from {{ $order->branch?->name }} stock. No laundry processing or transfer.</p>
+            @else
+                <span class="{{ \App\Support\StatusBadge::classes($order->transaction_type === 'delivery' ? 'delivery' : 'regular') }}">{{ $order->transaction_type === 'delivery' ? 'Delivery / Pick-up' : 'Walk-in / Drop Off' }}</span>
+            @endif
             @if($order->is_rush)
                 <span class="inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush Order</span>
             @endif

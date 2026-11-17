@@ -57,8 +57,7 @@ class DefaultLaundryServices
             ['name' => 'Amuma',         'pricing_type' => 'piece', 'price' => 0, 'category' => 'Establishment', 'report_category' => 'other'],
             ['name' => 'Nailaholics',   'pricing_type' => 'load',  'price' => 0, 'category' => 'Establishment', 'report_category' => 'other'],
 
-            // For Sale Items
-            ['name' => 'Sachet', 'pricing_type' => 'piece', 'price' => 0, 'category' => 'For Sale Items', 'report_category' => 'other'],
+            // Products for sale (sachets, bottles, ...) are inventory Add Ons, not services.
         ];
     }
 

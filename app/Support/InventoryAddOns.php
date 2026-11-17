@@ -20,7 +20,7 @@ class InventoryAddOns
 {
     public const CATEGORY = 'Add Ons';
 
-    public const TYPES = ['detergent' => 'Detergent', 'fabcon' => 'Fabcon'];
+    public const TYPES = ['detergent' => 'Detergent', 'fabcon' => 'Fabcon', 'other' => 'Other'];
 
     /** Default branded add-on products created for every branch. */
     public static function defaults(): array

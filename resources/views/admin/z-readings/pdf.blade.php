@@ -45,7 +45,7 @@
         ->filter()
         ->values();
     if ($columns->isEmpty()) {
-        $columns = collect(['Small Machine', 'Big Machine', 'Delivery', 'Extra Services', 'Special Items', 'Establishment', 'For Sale Items']);
+        $columns = collect(['Small Machine', 'Big Machine', 'Delivery', 'Extra Services', 'Special Items', 'Establishment', 'Add Ons']);
     }
     $cashOnHand = (float) $reading->expected_cash_amount
         + (float) data_get($details, 'expense_breakdown.money_movements.cash_in', 0);
