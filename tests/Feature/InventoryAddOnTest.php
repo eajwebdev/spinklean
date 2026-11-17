@@ -198,6 +198,50 @@ class InventoryAddOnTest extends TestCase
         $this->assertEquals(3, (float) $inventory->fresh()->quantity);
     }
 
+    public function test_ml_named_add_on_is_counted_and_deducted_per_piece(): void
+    {
+        $inventory = $this->createAddOn(['name' => 'DOWNY PASSION 24ML', 'unit' => 'ml', 'quantity' => 21]);
+        $this->assertSame('pcs', $inventory->unit);
+
+        $this->orderAddOn($inventory->addOnService, 2)->assertSessionHasNoErrors();
+        $this->assertEquals(19, (float) $inventory->fresh()->quantity);
+    }
+
+    public function test_existing_ml_rule_on_add_on_stock_deducts_one_piece(): void
+    {
+        // Existing data: an older service linked to the Downy stock as "24" (ml).
+        $inventory = $this->createAddOn(['name' => 'DOWNY PASSION 24ML', 'quantity' => 21]);
+        $oldService = LaundryService::query()->create([
+            'branch_id' => $this->branch->id,
+            'name' => 'DOWNY PASSION 24ML (old)',
+            'pricing_type' => 'piece',
+            'price' => 15,
+            'is_active' => true,
+        ]);
+        $oldService->inventoryUsages()->create(['inventory_id' => $inventory->id, 'quantity' => 24]);
+
+        // 2 sold = 2 pcs, not 48 "ml".
+        $this->orderAddOn($oldService, 2)->assertSessionHasNoErrors();
+        $this->assertEquals(19, (float) $inventory->fresh()->quantity);
+    }
+
+    public function test_service_rule_on_add_on_stock_is_saved_as_one_piece(): void
+    {
+        $inventory = $this->createAddOn();
+
+        $this->actingAs($this->manager)->post(route('admin.services.store'), [
+            'branch_id' => $this->branch->id,
+            'name' => 'Fabcon 24ml',
+            'pricing_type' => 'custom',
+            'price' => 10,
+            'is_active' => 1,
+            'inventory_usages' => [$inventory->id => 24],
+        ])->assertSessionHasNoErrors();
+
+        $service = LaundryService::query()->where('name', 'Fabcon 24ml')->firstOrFail();
+        $this->assertEquals(1, (float) $service->inventoryUsages()->value('quantity'));
+    }
+
     public function test_default_add_on_products_are_seeded_into_branch_inventory(): void
     {
         \App\Support\InventoryAddOns::seedForBranch($this->branch);

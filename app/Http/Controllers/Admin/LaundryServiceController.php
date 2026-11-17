@@ -47,7 +47,7 @@ class LaundryServiceController extends Controller
             ->where('branch_id', $selectedBranchId)
             ->where('is_active', true)
             ->orderBy('name')
-            ->get(['id', 'name', 'unit', 'quantity']);
+            ->get(['id', 'name', 'unit', 'quantity', 'is_add_on']);
         $presetServices = LaundryService::query()
             ->where('branch_id', $selectedBranchId)
             ->where('is_active', true)
@@ -240,12 +240,18 @@ class LaundryServiceController extends Controller
             ]);
         }
 
+        // Add-on stock is used in whole pieces: 1 pc per service sold.
+        $addOnIds = Inventory::query()
+            ->whereIn('id', $validInventoryIds)
+            ->where('is_add_on', true)
+            ->pluck('id');
+
         $service->inventoryUsages()->whereNotIn('inventory_id', $validInventoryIds)->delete();
 
         foreach ($validInventoryIds as $inventoryId) {
             $service->inventoryUsages()->updateOrCreate(
                 ['inventory_id' => $inventoryId],
-                ['quantity' => $quantities->get($inventoryId)]
+                ['quantity' => $addOnIds->contains($inventoryId) ? 1 : $quantities->get($inventoryId)]
             );
         }
     }

@@ -249,6 +249,9 @@ class InventoryController extends Controller
         if (! $validated['is_add_on']) {
             // Keep the last type / price so re-enabling the add-on restores them.
             unset($validated['add_on_type'], $validated['selling_price']);
+        } else {
+            // Add-ons are sold and deducted per piece, even when the name says "24ML".
+            $validated['unit'] = 'pcs';
         }
 
         return $validated;

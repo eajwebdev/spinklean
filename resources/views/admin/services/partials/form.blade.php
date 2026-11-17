@@ -82,13 +82,16 @@
                     <span class="min-w-0">
                         <span class="block truncate text-sm font-medium">{{ $inventory->name }}</span>
                         <span class="text-xs text-muted">{{ number_format((float) $inventory->quantity, 2) }} {{ $inventory->unit }} in stock</span>
+                        @if($inventory->is_add_on)
+                            <span class="block text-[10px] font-semibold text-sky-600">Add-On · deducts 1 pc per sale</span>
+                        @endif
                     </span>
                     <input
                         name="inventory_usages[{{ $inventory->id }}]"
-                        value="{{ old('inventory_usages.'.$inventory->id, $savedQuantity) }}"
+                        value="{{ old('inventory_usages.'.$inventory->id, $inventory->is_add_on && (float) $savedQuantity > 0 ? 1 : $savedQuantity) }}"
                         type="number"
                         min="0"
-                        step="0.0001"
+                        @if($inventory->is_add_on) max="1" step="1" @else step="0.0001" @endif
                         class="h-9 w-full rounded-md border border-border bg-white px-2 text-right text-sm dark:border-gray-800 dark:bg-gray-900"
                     >
                 </label>

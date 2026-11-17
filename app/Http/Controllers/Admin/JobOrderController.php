@@ -1165,8 +1165,14 @@ class JobOrderController extends Controller
             foreach ($service->inventoryUsages as $usage) {
                 $inventory = $this->productionInventoryForUsage($order, $usage, $service);
 
+                // Add-on stock (Downy 24ML, Ariel, ...) is sold in whole pieces:
+                // 1 pc per quantity sold, even if an older service rule says 24 (ml).
+                $perUnit = ($inventory->is_add_on || $usage->inventory?->is_add_on)
+                    ? 1.0
+                    : (float) $usage->quantity;
+
                 $deductions[$inventory->id] = ($deductions[$inventory->id] ?? 0)
-                    + ((float) $usage->quantity * (float) $item['quantity']);
+                    + ($perUnit * (float) $item['quantity']);
             }
         }
 

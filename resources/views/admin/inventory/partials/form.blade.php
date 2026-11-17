@@ -69,7 +69,7 @@
                 <input type="checkbox" name="is_add_on" value="1" x-model="addOn" class="rounded border-border text-primary">
                 Sell as Add-On in Job Orders
             </label>
-            <p class="mt-1 text-xs text-muted">Shows this product under "Add Ons" in Job Orders. Each one sold deducts 1 {{ $item->unit ?: 'unit' }} from this stock.</p>
+            <p class="mt-1 text-xs text-muted">Shows this product under "Add Ons" in Job Orders. Each one sold deducts 1 pc from this stock. Add-ons are always counted in pcs.</p>
 
             <div x-show="addOn" x-cloak class="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
                 <div>

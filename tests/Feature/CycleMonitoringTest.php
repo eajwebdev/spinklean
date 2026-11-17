@@ -2162,6 +2162,89 @@ class CycleMonitoringTest extends TestCase
         $this->assertNotNull($order->fresh()->inventory_deducted_at);
     }
 
+    public function test_pickup_dropoff_receive_deducts_add_on_per_piece_even_with_old_ml_rule(): void
+    {
+        $this->completeSystemSettings();
+        $this->activeTrial();
+
+        $dropoffBranch = $this->createBranch([
+            'name' => 'Limketkai',
+            'code' => 'DROP12',
+            'branch_type' => 'no_machine',
+            'machine_count' => 0,
+        ]);
+        $productionBranch = $this->createBranch([
+            'name' => 'Osmena',
+            'code' => 'PROD12',
+            'branch_type' => 'full_service',
+            'machine_count' => 3,
+        ]);
+        $downy = Inventory::query()->create([
+            'branch_id' => $dropoffBranch->id,
+            'name' => 'DOWNY PASSION 24ML',
+            'sku' => 'FABCON002',
+            'unit' => 'pcs',
+            'quantity' => 21,
+            'reorder_level' => 7,
+            'is_active' => true,
+            'is_add_on' => true,
+            'add_on_type' => 'fabcon',
+            'selling_price' => 15,
+        ]);
+        \App\Support\InventoryAddOns::sync($downy);
+
+        // Existing data: an older service that deducts "24" (ml) of the Downy stock.
+        $oldService = \App\Models\LaundryService::query()->create([
+            'branch_id' => $dropoffBranch->id,
+            'name' => 'DOWNY PASSION 24ML',
+            'report_category' => 'fabcon',
+            'pricing_type' => 'piece',
+            'price' => 15,
+            'is_active' => true,
+        ]);
+        $oldService->inventoryUsages()->create(['inventory_id' => $downy->id, 'quantity' => 24]);
+
+        $customer = $this->createCustomer($dropoffBranch);
+        $manager = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $dropoffBranch->id,
+            'access' => ['job_orders'],
+        ]);
+        $productionUser = User::factory()->create([
+            'role' => 'branch_manager',
+            'branch_id' => $productionBranch->id,
+            'access' => ['cycles'],
+        ]);
+
+        $this->actingAs($manager)
+            ->post(route('admin.job-orders.store'), [
+                'branch_id' => $dropoffBranch->id,
+                'processing_branch_id' => $productionBranch->id,
+                'customer_id' => $customer->id,
+                'items' => [[
+                    'laundry_service_id' => $oldService->id,
+                    'description' => $oldService->name,
+                    'quantity' => 2,
+                    'unit_price' => 15,
+                ]],
+                'discount' => 0,
+                'paid_amount' => 0,
+                'tag_number' => 'TAG-TEST-DOWNY-ML',
+                'transaction_type' => 'walk_in',
+            ])
+            ->assertRedirect(route('admin.job-orders.index'));
+
+        $order = JobOrder::query()->where('customer_id', $customer->id)->firstOrFail();
+
+        // Receiving at production used to need 48 (24 x 2) and fail against 21 pcs.
+        $this->actingAs($productionUser)
+            ->get(route('admin.cycles.scan', $order))
+            ->assertSessionHasNoErrors();
+
+        $this->assertSame('19.00', $downy->fresh()->quantity);
+        $this->assertNotNull($order->fresh()->inventory_deducted_at);
+    }
+
     private function completeSystemSettings(): void
     {
         SystemSetting::query()->create([
