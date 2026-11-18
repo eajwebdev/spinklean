@@ -1,9 +1,17 @@
+@php
+    // Each popup (Add User, Edit <user>) has its own key, so a failed save only refills
+    // and shows errors in the form that was actually submitted.
+    $formKey = $method === 'POST' ? 'user-create' : 'user-edit-'.$user->id;
+    $isSubmitted = old('_form') === $formKey;
+    $value = fn (string $field, $default = null) => $isSubmitted ? old($field, $default) : $default;
+@endphp
 <form
     method="POST"
     action="{{ $action }}"
+    autocomplete="off"
     x-data="userAccessForm({
-        role: @js(old('role', $user->role ?: 'cashier')),
-        access: @js(array_values(old('access', $user->access ?? []))),
+        role: @js($value('role', $user->role ?: 'cashier')),
+        access: @js(array_values($value('access', $user->access ?? []) ?? [])),
         presets: @js($roleAccessPresets),
     })"
     class="space-y-4"
@@ -12,21 +20,22 @@
     @if($method !== 'POST')
         @method($method)
     @endif
+    <input type="hidden" name="_form" value="{{ $formKey }}">
 
     <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
         <div>
             <label class="mb-1.5 block text-sm font-medium">Name</label>
-            <input name="name" value="{{ old('name', $user->name) }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            <input name="name" value="{{ $value('name', $user->name) }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
         </div>
 
         <div>
             <label class="mb-1.5 block text-sm font-medium">Username</label>
-            <input name="username" value="{{ old('username', $user->username) }}" required class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            <input name="username" value="{{ $value('username', $user->username) }}" required autocomplete="off" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
         </div>
 
         <div>
             <label class="mb-1.5 block text-sm font-medium">Email <span class="font-normal text-muted">(optional)</span></label>
-            <input type="email" name="email" value="{{ old('email', $user->email) }}" placeholder="Optional email address" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            <input type="email" name="email" value="{{ $value('email', $user->email) }}" autocomplete="off" placeholder="Optional email address" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
         </div>
 
         <div>
@@ -34,26 +43,29 @@
             <select name="branch_id" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
                 <option value="">All branches</option>
                 @foreach($branches as $branch)
-                    <option value="{{ $branch->id }}" @selected(old('branch_id', $user->branch_id) == $branch->id)>{{ $branch->name }}</option>
+                    <option value="{{ $branch->id }}" @selected($value('branch_id', $user->branch_id) == $branch->id)>{{ $branch->name }}</option>
                 @endforeach
             </select>
         </div>
 
         <div>
-            <label class="mb-1.5 block text-sm font-medium">Password {{ $method !== 'POST' ? '(leave blank to keep)' : '' }}</label>
-            <input type="password" name="password" {{ $method === 'POST' ? 'required' : '' }} class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            <label class="mb-1.5 block text-sm font-medium">{{ $method !== 'POST' ? 'New Password' : 'Password' }} <span class="font-normal text-muted">{{ $method !== 'POST' ? '(leave blank to keep current)' : '(at least 6 characters)' }}</span></label>
+            <input type="password" name="password" minlength="6" autocomplete="new-password" {{ $method === 'POST' ? 'required' : '' }} class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            @if($isSubmitted)
+                @error('password')<p class="mt-1 text-xs text-red-600">{{ $message }}</p>@enderror
+            @endif
         </div>
 
         <div>
-            <label class="mb-1.5 block text-sm font-medium">Confirm Password</label>
-            <input type="password" name="password_confirmation" {{ $method === 'POST' ? 'required' : '' }} class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+            <label class="mb-1.5 block text-sm font-medium">Confirm {{ $method !== 'POST' ? 'New ' : '' }}Password</label>
+            <input type="password" name="password_confirmation" minlength="6" autocomplete="new-password" {{ $method === 'POST' ? 'required' : '' }} class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
         </div>
 
         <div>
             <label class="mb-1.5 block text-sm font-medium">Role</label>
             <select name="role" x-model="role" @change="applyPreset(role)" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
                 @foreach($roles as $role)
-                    <option value="{{ $role }}" @selected(old('role', $user->role) === $role)>{{ str_replace('_', ' ', ucfirst($role)) }}</option>
+                    <option value="{{ $role }}" @selected($value('role', $user->role) === $role)>{{ str_replace('_', ' ', ucfirst($role)) }}</option>
                 @endforeach
             </select>
         </div>
@@ -62,7 +74,7 @@
             <label class="mb-1.5 block text-sm font-medium">Status</label>
             <select name="status" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
                 @foreach(['active', 'inactive', 'suspended'] as $status)
-                    <option value="{{ $status }}" @selected(old('status', $user->status) === $status)>{{ ucfirst($status) }}</option>
+                    <option value="{{ $status }}" @selected($value('status', $user->status) === $status)>{{ ucfirst($status) }}</option>
                 @endforeach
             </select>
         </div>
@@ -102,9 +114,14 @@
         </div>
     </div>
 
-    @if($errors->any())
+    @if($isSubmitted && $errors->any())
         <div class="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {{ $errors->first() }}
+            <p class="font-semibold">Not saved. Please fix:</p>
+            <ul class="mt-1 list-disc pl-5">
+                @foreach($errors->all() as $error)
+                    <li>{{ $error }}</li>
+                @endforeach
+            </ul>
         </div>
     @endif
 

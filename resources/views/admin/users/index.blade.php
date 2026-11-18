@@ -4,7 +4,10 @@
 
 @section('content')
 <div
-    x-data="{ createOpen: @js($errors->any() && ! old('_method')), editOpen: null }"
+    x-data="{
+        createOpen: @js($errors->any() && old('_form') === 'user-create'),
+        editOpen: @js($errors->any() && str_starts_with((string) old('_form'), 'user-edit-') ? (int) substr((string) old('_form'), 10) : null),
+    }"
     class="space-y-4"
 >
     <div class="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 shadow-sm dark:border-gray-800 dark:bg-gray-900 sm:flex-row sm:items-center sm:justify-between">

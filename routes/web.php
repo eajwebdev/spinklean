@@ -90,6 +90,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
     Route::get('/dashboard/data', [DashboardController::class, 'data'])->name('dashboard.data');
     Route::get('/dashboard/assistant/options', [DashboardController::class, 'assistantOptions'])->name('dashboard.assistant.options');
     Route::post('/dashboard/assistant', [DashboardController::class, 'assistant'])->name('dashboard.assistant');
+    Route::put('/account/password', [\App\Http\Controllers\AccountPasswordController::class, 'update'])->name('account.password.update');
 
     Route::prefix('admin')->name('admin.')->group(function () {
         Route::middleware('super.admin')->group(function () {

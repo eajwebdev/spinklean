@@ -233,6 +233,11 @@
 
                     <div class="my-1 h-px bg-border dark:bg-gray-800"></div>
 
+                    <button type="button" @click="open = false; $dispatch('open-change-password')" class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm hover:bg-smoke dark:hover:bg-gray-800">
+                        <span data-lucide="lock" class="h-4 w-4"></span>
+                        Change password
+                    </button>
+
                     <form method="POST" action="{{ route('logout') }}">
                         @csrf
                         <button type="submit" class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
@@ -245,3 +250,44 @@
         </div>
     </div>
 </header>
+
+{{-- Change my password (any signed-in user). Reopens with errors if the save failed. --}}
+<div x-data="{ show: @js($errors->accountPassword->any()), reveal: false }" @open-change-password.window="show = true; $nextTick(() => window.renderLucideIcons())" x-init="show && $nextTick(() => window.renderLucideIcons())">
+    <template x-teleport="body">
+        <div x-cloak x-show="show" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div @click.outside="show = false" class="w-full max-w-md rounded-lg bg-white p-5 shadow-2xl dark:bg-gray-900">
+                <div class="mb-4 flex items-center justify-between">
+                    <h2 class="inline-flex items-center gap-2 text-lg font-semibold"><span data-lucide="lock" class="h-4 w-4 text-primary"></span>Change Password</h2>
+                    <button type="button" @click="show = false" class="rounded-md p-2 hover:bg-smoke dark:hover:bg-gray-800" aria-label="Close"><span data-lucide="x" class="h-4 w-4"></span></button>
+                </div>
+                <form method="POST" action="{{ route('account.password.update') }}" class="space-y-3" autocomplete="off">
+                    @csrf
+                    @method('PUT')
+                    <input type="text" name="username" value="{{ auth()->user()->username }}" autocomplete="username" class="hidden" tabindex="-1" aria-hidden="true">
+                    <label class="block">
+                        <span class="mb-1.5 block text-sm font-medium">Current Password</span>
+                        <input :type="reveal ? 'text' : 'password'" name="current_password" required autocomplete="current-password" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                        @error('current_password', 'accountPassword')<span class="mt-1 block text-xs text-red-600">{{ $message }}</span>@enderror
+                    </label>
+                    <label class="block">
+                        <span class="mb-1.5 block text-sm font-medium">New Password <span class="font-normal text-muted">(at least 6 characters)</span></span>
+                        <input :type="reveal ? 'text' : 'password'" name="password" required minlength="6" autocomplete="new-password" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                        @error('password', 'accountPassword')<span class="mt-1 block text-xs text-red-600">{{ $message }}</span>@enderror
+                    </label>
+                    <label class="block">
+                        <span class="mb-1.5 block text-sm font-medium">Confirm New Password</span>
+                        <input :type="reveal ? 'text' : 'password'" name="password_confirmation" required minlength="6" autocomplete="new-password" class="h-9 w-full rounded-md border border-border bg-white px-3 text-sm dark:border-gray-700 dark:bg-gray-950">
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-muted">
+                        <input type="checkbox" x-model="reveal" class="rounded border-border text-primary">
+                        Show passwords
+                    </label>
+                    <div class="flex justify-end gap-2 pt-1">
+                        <button type="button" @click="show = false" class="h-9 rounded-md border border-border px-4 text-sm font-medium hover:bg-smoke dark:border-gray-700 dark:hover:bg-gray-800">Cancel</button>
+                        <button type="submit" class="h-9 rounded-md bg-primary px-4 text-sm font-medium text-white hover:opacity-90">Change Password</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </template>
+</div>
