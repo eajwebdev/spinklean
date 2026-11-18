@@ -52,6 +52,16 @@
             if (values.ending === '' || values.ending == null) return 0;
             return this.cycleTotal(machine, type) - this.systemTotal(machine, type);
         },
+        previousEndings: @js($previousEndings ?? []),
+        previousEnding(machine, type) {
+            const value = this.previousEndings[machine]?.[type];
+            return value === null || value === undefined ? null : Number(value);
+        },
+        beginningChanged(machine, type) {
+            const previous = this.previousEnding(machine, type);
+            const beginning = this.machineCounters[machine]?.[type]?.beginning;
+            return previous !== null && beginning !== '' && beginning != null && Number(beginning) !== previous;
+        },
         resetEnding(machine, type) {
             const values = this.machineCounters[machine][type];
             values.ending = (Number(values.beginning || 0) + this.systemTotal(machine, type)) % 10000;
@@ -239,7 +249,7 @@
                 <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                     <div class="mb-3">
                         <h2 class="text-base font-semibold">Machine Counter Readings</h2>
-                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending. Ending is pre-filled from Cycle Monitoring and end-of-day cleaning tasks; correct it to the actual machine counter if it differs (e.g. a machine was started by accident).</p>
+                        <p class="text-xs text-muted">Beginning comes from the previous Z Reading ending. If it does not match the actual machine counter, type the real number: the previous Z Reading ending is corrected too. Ending is pre-filled from Cycle Monitoring and end-of-day cleaning tasks; correct it to the actual machine counter if it differs. Saving an ending also updates the next day's beginning.</p>
                     </div>
 
                     <div x-show="mismatchCount > 0" x-cloak class="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/30 dark:text-amber-200">
@@ -291,11 +301,21 @@
                                 <div class="overflow-hidden rounded-md border border-border dark:border-gray-800">
                                     <div class="bg-smoke px-3 py-1.5 text-center text-xs font-semibold uppercase dark:bg-gray-950">{{ $label }} {{ $machine }}</div>
                                     <div class="space-y-1.5 p-2 text-xs">
-                                        <div class="flex items-center justify-between gap-2">
+                                        <label class="flex items-center justify-between gap-2">
                                             <span class="text-muted">Beginning</span>
-                                            <input type="hidden" name="machine_counters[{{ $machine }}][{{ $type }}][beginning]" x-model.number="{{ $ref }}['beginning']">
-                                            <span class="font-semibold tabular-nums text-muted" x-text="counter({{ $ref }}['beginning'])" aria-label="Beginning {{ $label }} {{ $machine }}"></span>
-                                        </div>
+                                            <input
+                                                name="machine_counters[{{ $machine }}][{{ $type }}][beginning]"
+                                                x-model.number="{{ $ref }}['beginning']"
+                                                type="text"
+                                                inputmode="numeric"
+                                                pattern="[0-9]*"
+                                                maxlength="4"
+                                                required
+                                                class="h-8 w-20 rounded-md border px-2 text-right text-sm font-semibold tabular-nums dark:bg-gray-900"
+                                                :class="beginningChanged({{ $args }}) ? 'border-blue-300 bg-sky-50 dark:bg-sky-500/10' : 'border-border dark:border-gray-800'"
+                                                aria-label="Beginning {{ $label }} {{ $machine }}"
+                                            >
+                                        </label>
                                         <label class="flex items-center justify-between gap-2">
                                             <span class="text-muted">Ending</span>
                                             <input
@@ -311,6 +331,14 @@
                                                 aria-label="Ending {{ $label }} {{ $machine }}"
                                             >
                                         </label>
+                                    </div>
+                                    <div
+                                        x-show="beginningChanged({{ $args }})"
+                                        x-cloak
+                                        class="border-t border-sky-200 bg-sky-50 px-3 py-1 text-[11px] leading-4 text-sky-700 dark:border-sky-900/60 dark:bg-sky-500/10 dark:text-sky-300"
+                                    >
+                                        <span x-text="`Previous Z Reading ending ${counter(previousEnding({{ $args }}))} will be corrected to ${counter({{ $ref }}['beginning'])}.`"></span>
+                                        <button type="button" class="font-semibold underline" @click="{{ $ref }}['beginning'] = previousEnding({{ $args }})">Undo</button>
                                     </div>
                                     @if($cleanCycles > 0)
                                         <div class="flex items-center justify-between border-t border-dashed border-blue-200 bg-blue-50/50 px-3 py-1 text-[11px] text-blue-800 dark:border-blue-900/40 dark:bg-blue-950/20 dark:text-blue-300">

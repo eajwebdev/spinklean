@@ -15,6 +15,7 @@ use App\Models\Payment;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Models\ZReading;
+use App\Support\Activity;
 use App\Support\FinancialReconciliation;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
@@ -111,6 +112,7 @@ class ZReadingController extends Controller
             ->where('branch_id', $branch->id)
             ->whereDate('business_date', $businessDate)
             ->first();
+        $previousEndings = [];
         if ($branch->isNoMachine()) {
             $machineCount = 0;
             $machineCounters = [];
@@ -121,10 +123,22 @@ class ZReadingController extends Controller
                 (int) collect($summary['machine_cycles'])->max('machine_number'),
                 (int) collect(array_keys($reading?->machine_counters ?? []))->max()
             );
+            $previousCounters = $this->neighbourReading((int) $branch->id, $businessDate, '<')?->machine_counters ?? [];
             $machineCounters = $this->withSystemCycleCounts(
-                $this->machineCountersForDate((int) $branch->id, $businessDate, $machineCount, $summary, $reading),
+                $this->beginningsFromPrevious(
+                    $this->machineCountersForDate((int) $branch->id, $businessDate, $machineCount, $summary, $reading),
+                    $previousCounters
+                ),
                 $summary
             );
+            // Previous Z Reading ending per counter, so the form can say when a corrected
+            // beginning will also correct yesterday's ending.
+            $previousEndings = collect(range(1, $machineCount))
+                ->mapWithKeys(fn (int $machine) => [$machine => [
+                    'wash' => data_get($previousCounters, "{$machine}.wash.ending"),
+                    'dry' => data_get($previousCounters, "{$machine}.dry.ending"),
+                ]])
+                ->all();
         }
 
         return view('admin.z-readings.create', [
@@ -137,6 +151,7 @@ class ZReadingController extends Controller
             'summary' => $summary,
             'machineCount' => $machineCount,
             'machineCounters' => $machineCounters,
+            'previousEndings' => $previousEndings,
         ]);
     }
 
@@ -153,9 +168,9 @@ class ZReadingController extends Controller
             'actual_gcash_amount' => ['nullable', 'numeric', 'min:0', 'max:999999999.99'],
             'actual_bank_amount' => ['nullable', 'numeric', 'min:0', 'max:999999999.99'],
             'machine_counters' => ['nullable', 'array'],
-            'machine_counters.*.wash.beginning' => ['nullable', 'integer', 'min:0', 'max:999999999'],
+            'machine_counters.*.wash.beginning' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'machine_counters.*.wash.ending' => ['nullable', 'integer', 'min:0', 'max:9999'],
-            'machine_counters.*.dry.beginning' => ['nullable', 'integer', 'min:0', 'max:999999999'],
+            'machine_counters.*.dry.beginning' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'machine_counters.*.dry.ending' => ['nullable', 'integer', 'min:0', 'max:9999'],
             'remarks' => ['nullable', 'string', 'max:1000'],
         ]);
@@ -191,7 +206,8 @@ class ZReadingController extends Controller
         $overShort = round($actualTotal - (float) $summary['expected_total_amount'], 2);
         $remarks = $validated['remarks'] ?? null;
 
-        $reading = DB::transaction(function () use ($branchId, $businessDate, $cashCount, $machineCounters, $actualCash, $actualGcash, $actualBank, $actualTotal, $overShort, $summary, $remarks, $user): ZReading {
+        $corrections = [];
+        $reading = DB::transaction(function () use ($request, $branchId, $businessDate, $cashCount, $machineCounters, $actualCash, $actualGcash, $actualBank, $actualTotal, $overShort, $summary, $remarks, $user, &$corrections): ZReading {
             $reading = ZReading::query()
                 ->where('branch_id', $branchId)
                 ->whereDate('business_date', $businessDate)
@@ -232,12 +248,21 @@ class ZReadingController extends Controller
             ]);
             $reading->save();
 
+            if ($machineCounters) {
+                $corrections = $this->syncNeighbourCounters($request, $reading);
+            }
+
             return $reading;
         });
 
+        $message = "Z Reading {$reading->reading_number} saved successfully.";
+        if ($corrections) {
+            $message .= ' Machine counters also updated: '.implode('; ', $corrections).'.';
+        }
+
         return redirect()
             ->route('admin.z-readings.index', ['branch_id' => $branchId, 'business_date' => $businessDate])
-            ->with('success', "Z Reading {$reading->reading_number} saved successfully.");
+            ->with('success', $message);
     }
 
     public function pdf(Request $request, ZReading $zReading)
@@ -820,6 +845,131 @@ class ZReadingController extends Controller
         if ($errors) {
             throw ValidationException::withMessages($errors);
         }
+    }
+
+    /**
+     * The closest saved Z Reading of the branch before ('<') or after ('>') the date.
+     */
+    private function neighbourReading(int $branchId, string $businessDate, string $direction, bool $lock = false): ?ZReading
+    {
+        return ZReading::query()
+            ->where('branch_id', $branchId)
+            ->whereDate('business_date', $direction, $businessDate)
+            ->when($direction === '<', fn ($query) => $query->latest('business_date')->latest('id'))
+            ->when($direction === '>', fn ($query) => $query->oldest('business_date')->oldest('id'))
+            ->when($lock, fn ($query) => $query->lockForUpdate())
+            ->first();
+    }
+
+    /**
+     * A saved reading keeps the beginnings it was saved with. When the previous day's ending has
+     * since been corrected, show the corrected value so the chain of counters stays continuous.
+     */
+    private function beginningsFromPrevious(array $counters, array $previousCounters): array
+    {
+        foreach ($counters as $machine => $types) {
+            foreach (['wash', 'dry'] as $type) {
+                $previousEnding = data_get($previousCounters, "{$machine}.{$type}.ending");
+                if (is_numeric($previousEnding) && isset($counters[$machine][$type])
+                    && (int) ($counters[$machine][$type]['beginning'] ?? -1) !== (int) $previousEnding) {
+                    $counters[$machine][$type]['beginning'] = (int) $previousEnding;
+                }
+            }
+        }
+
+        return $this->recountCounters($counters);
+    }
+
+    /**
+     * Recompute total / customer cycles / difference after a beginning or ending changed.
+     */
+    private function recountCounters(array $counters): array
+    {
+        foreach ($counters as $machine => $types) {
+            foreach (['wash', 'dry'] as $type) {
+                $beginning = data_get($types, "{$type}.beginning");
+                $ending = data_get($types, "{$type}.ending");
+                if (! isset($counters[$machine][$type]) || ! is_numeric($beginning) || ! is_numeric($ending)) {
+                    continue;
+                }
+
+                $difference = (int) $ending - (int) $beginning;
+                $total = $difference >= 0 ? $difference : self::COUNTER_MODULUS + $difference;
+                $counters[$machine][$type]['total'] = $total;
+                $counters[$machine][$type]['customer_cycles'] = max(0, $total - (int) data_get($types, "{$type}.cleaning_cycles", 0));
+                if (array_key_exists('system_total', $counters[$machine][$type])) {
+                    $systemTotal = (int) $counters[$machine][$type]['system_total'];
+                    $counters[$machine][$type]['system_ending'] = ((int) $beginning + $systemTotal) % self::COUNTER_MODULUS;
+                    $counters[$machine][$type]['difference'] = $total - $systemTotal;
+                }
+            }
+        }
+
+        return $counters;
+    }
+
+    /**
+     * Keep the machine counters continuous across days:
+     *  - a corrected beginning becomes the previous Z Reading's ending (the actual counter at close);
+     *  - this reading's ending becomes the next saved Z Reading's beginning.
+     *
+     * @return list<string> human-readable list of what changed
+     */
+    private function syncNeighbourCounters(Request $request, ZReading $reading): array
+    {
+        $counters = $reading->machine_counters ?? [];
+        $date = $reading->business_date->toDateString();
+        $changes = [];
+
+        $neighbours = [
+            // [reading, field to update on the neighbour, field it copies from this reading]
+            [$this->neighbourReading((int) $reading->branch_id, $date, '<', true), 'ending', 'beginning'],
+            [$this->neighbourReading((int) $reading->branch_id, $date, '>', true), 'beginning', 'ending'],
+        ];
+
+        foreach ($neighbours as [$neighbour, $targetField, $sourceField]) {
+            if (! $neighbour || empty($neighbour->machine_counters)) {
+                continue;
+            }
+
+            $neighbourCounters = $neighbour->machine_counters;
+            $updated = [];
+            foreach ($counters as $machine => $types) {
+                foreach (['wash' => 'Wash', 'dry' => 'Dry'] as $type => $label) {
+                    $value = data_get($types, "{$type}.{$sourceField}");
+                    if (! is_numeric($value) || ! isset($neighbourCounters[$machine][$type])) {
+                        continue;
+                    }
+
+                    $old = $neighbourCounters[$machine][$type][$targetField] ?? null;
+                    if (is_numeric($old) && (int) $old === (int) $value) {
+                        continue;
+                    }
+
+                    $neighbourCounters[$machine][$type][$targetField] = (int) $value;
+                    $updated[] = sprintf('%s %d %s %s → %04d', $label, $machine, $targetField, is_numeric($old) ? sprintf('%04d', $old) : '—', $value);
+                }
+            }
+
+            if (! $updated) {
+                continue;
+            }
+
+            $neighbour->machine_counters = $this->recountCounters($neighbourCounters);
+            $neighbour->save();
+
+            $dateLabel = $neighbour->business_date->format('M d, Y');
+            $changes[] = $dateLabel.' ('.implode(', ', $updated).')';
+
+            Activity::log($request, 'z_reading_machine_counters_synced', $neighbour, [
+                'reading_number' => $neighbour->reading_number,
+                'business_date' => $neighbour->business_date->toDateString(),
+                'from_reading' => $reading->reading_number,
+                'changes' => $updated,
+            ], (int) $neighbour->branch_id);
+        }
+
+        return $changes;
     }
 
     /**

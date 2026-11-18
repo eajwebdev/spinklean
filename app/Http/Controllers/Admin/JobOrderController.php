@@ -40,9 +40,12 @@ class JobOrderController extends Controller
     {
         $user = $request->user();
         [$dateFrom, $dateTo] = $this->dateRange($request);
+        $canFilterBranch = in_array($user->role, ['super_admin', 'admin'], true);
+        $branchFilter = $canFilterBranch && $request->filled('branch_id') ? $request->integer('branch_id') : null;
 
         $ordersQuery = JobOrder::with(['branch.setting', 'processingBranch', 'currentBranch', 'releaseBranch', 'customer', 'items', 'payments.receiver', 'payments.collectedBranch', 'poTransaction', 'transfers.destinationBranch', 'baggageDeposit'])
-            ->when($user->role !== 'super_admin' && $user->role !== 'admin', fn ($q) => $q->where('branch_id', $user->branch_id))
+            ->when(! $canFilterBranch, fn ($q) => $q->where('branch_id', $user->branch_id))
+            ->when($branchFilter, fn ($q) => $q->where('branch_id', $branchFilter))
             ->when($dateFrom, fn ($q) => $q->whereDate('created_at', '>=', $dateFrom))
             ->when($dateTo, fn ($q) => $q->whereDate('created_at', '<=', $dateTo))
             ->when($request->filled('search'), function ($q) use ($request) {
@@ -79,6 +82,8 @@ class JobOrderController extends Controller
             'orders' => $orders,
             'statusCounts' => $statusCounts,
             'statuses' => self::STATUSES,
+            'branches' => $canFilterBranch ? Branch::query()->orderBy('name')->get(['id', 'name']) : collect(),
+            'branchFilter' => $branchFilter,
         ]);
     }
 

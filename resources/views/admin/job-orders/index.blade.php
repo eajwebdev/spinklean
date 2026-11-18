@@ -60,8 +60,19 @@
     </div>
 
     <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
-        <form method="GET" class="grid grid-cols-1 gap-2 md:grid-cols-[1fr_12rem_16rem_auto]">
+        @if($branches->isNotEmpty())
+            <style>@media (min-width: 768px) { .jo-filter-branch { grid-template-columns: 1fr 12rem 12rem 16rem auto; } }</style>
+        @endif
+        <form method="GET" class="grid grid-cols-1 gap-2 {{ $branches->isNotEmpty() ? 'jo-filter-branch' : 'md:grid-cols-[1fr_12rem_16rem_auto]' }}">
             <input name="search" value="{{ request('search') }}" placeholder="Search JO or customer..." class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+            @if($branches->isNotEmpty())
+                <select name="branch_id" onchange="this.form.submit()" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
+                    <option value="">All branches</option>
+                    @foreach($branches as $branch)
+                        <option value="{{ $branch->id }}" @selected($branchFilter === $branch->id)>{{ $branch->name }}</option>
+                    @endforeach
+                </select>
+            @endif
             <select name="status" class="h-9 rounded-md border border-border bg-white px-3 text-sm dark:border-gray-800 dark:bg-gray-950">
                 <option value="">All status</option>
                 <option value="active" @selected(request('status') === 'active')>In Process</option>

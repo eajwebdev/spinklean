@@ -24,10 +24,10 @@
     }
 
     $toneClasses = "{
-        'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900': row.tone === 'ok',
-        'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900': row.tone === 'warn',
-        'bg-red-50 text-red-700 border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-900': row.tone === 'bad',
-        'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-900': row.tone === 'info',
+        'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-900/60': row.tone === 'ok',
+        'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-900/60': row.tone === 'warn',
+        'bg-red-50 text-red-700 border-red-200 dark:bg-red-500/10 dark:text-red-300 dark:border-red-900/60': row.tone === 'bad',
+        'bg-sky-50 text-sky-700 border-sky-200 dark:bg-sky-500/10 dark:text-sky-300 dark:border-sky-900/60': row.tone === 'info',
     }";
     $initialTab = array_key_exists(request('tab'), $tabs) ? request('tab') : 'overview';
 
@@ -35,7 +35,7 @@
     $overviewCards = [
         ['Physical Collections', 'data.stats.collections', 'receipt', 'Cash + GCash received'],
         ['Total Deductions', 'data.deductions.total', 'expense', 'Expenses, withdrawals, repayments'],
-        ['Net After Expenses', 'data.sales.net_after_expenses', 'scale', 'Sales owned minus expenses'],
+        ['Net Sales After Expenses', 'data.sales.net_after_expenses', 'scale', 'Total sales (JO + PO) minus all expenses'],
         ['Job Orders', 'data.stats.orders', 'jobOrders', 'Created in this period'],
     ];
     $salesCards = [
@@ -278,6 +278,8 @@
             </div>
         </div>
 
+        @include('partials.dashboard-total-sales')
+
         {{-- Health ratios --}}
         <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <div class="{{ $panel }}">
@@ -394,6 +396,8 @@
 
     {{-- ============ SALES ============ --}}
     <section x-show="tab === 'sales'" x-cloak class="space-y-4" role="tabpanel">
+        @include('partials.dashboard-total-sales')
+
         <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
             @foreach($salesCards as [$label, $expr, $icon, $hint])
                 <div class="{{ $panel }}">

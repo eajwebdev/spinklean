@@ -15,6 +15,8 @@ use App\Models\JobOrder;
 use App\Models\JobOrderItem;
 use App\Models\MoneyMovement;
 use App\Models\Payment;
+use App\Models\PoTransaction;
+use App\Models\PoTransactionPayment;
 use App\Models\SystemSetting;
 use App\Models\ZReading;
 use App\Support\DashboardAnalytics;
@@ -398,9 +400,33 @@ class DashboardController extends Controller
             ->whereDate('paid_at', '<=', $dateTo)
             ->count();
 
+        // Total Sales split: normal job orders (payments received) + PO orders (billed by PO date).
+        // Legacy "po"-type payments are left out of job-order sales so a PO is never counted twice.
+        $legacyPoPayments = round((float) Payment::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->where('payment_type', 'po')
+            ->whereDate('paid_at', '>=', $dateFrom)
+            ->whereDate('paid_at', '<=', $dateTo)
+            ->sum('amount'), 2);
+        $jobOrderSales = round($financial['sales_owned'] - $legacyPoPayments, 2);
+        $poTotals = PoTransaction::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereDate('transaction_date', '>=', $dateFrom)
+            ->whereDate('transaction_date', '<=', $dateTo)
+            ->selectRaw('COUNT(*) as po_count, COALESCE(SUM(amount), 0) as amount, COALESCE(SUM(balance), 0) as balance')
+            ->first();
+        $poSales = round((float) ($poTotals->amount ?? 0), 2);
+        $poCollected = round((float) PoTransactionPayment::query()
+            ->when($branchId, fn ($query) => $query->where('branch_id', $branchId))
+            ->whereHas('poTransaction')
+            ->whereDate('paid_at', '>=', $dateFrom)
+            ->whereDate('paid_at', '<=', $dateTo)
+            ->sum('amount'), 2);
+
         $cashlessRepayments = round($financial['gcash_payable_repayments'] + $financial['bank_payable_repayments'], 2);
         $totalDeductions = round($financial['expenses_total'] + $financial['cash_out'] + $cashlessRepayments, 2);
-        $netAfterExpenses = round($financial['sales_owned'] - $financial['expenses_total'], 2);
+        // Net Sales = Total Sales (job orders + PO) minus ALL recorded expenses (store cash, GCash, bank and owner-paid).
+        $netAfterExpenses = round($jobOrderSales + $poSales - $financial['expenses_total'], 2);
 
         $expenses = BranchExpense::query()
             ->with('branch')
@@ -508,6 +534,14 @@ class DashboardController extends Controller
                 'monthly_billing' => $this->money($currency, $financial['monthly_billing_collections']),
                 'net_after_expenses' => $this->money($currency, $netAfterExpenses),
                 'net_is_negative' => $netAfterExpenses < 0,
+                'job_order_sales' => $this->money($currency, $jobOrderSales),
+                'po_sales' => $this->money($currency, $poSales),
+                'po_count' => number_format((int) ($poTotals->po_count ?? 0)),
+                'po_collected' => $this->money($currency, $poCollected),
+                'po_balance' => $this->money($currency, (float) ($poTotals->balance ?? 0)),
+                'combined_sales' => $this->money($currency, $jobOrderSales + $poSales),
+                'all_expenses' => $this->money($currency, $financial['expenses_total']),
+                'expenses_count' => number_format($expenseCategories->sum('entries')),
             ],
             'deductions' => [
                 'total' => $this->money($currency, $totalDeductions),

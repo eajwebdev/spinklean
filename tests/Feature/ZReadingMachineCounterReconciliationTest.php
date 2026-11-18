@@ -162,6 +162,81 @@ class ZReadingMachineCounterReconciliationTest extends TestCase
         $this->assertSame(5, $counters[1]['wash']['total']);
     }
 
+    public function test_corrected_beginning_fixes_the_previous_z_reading_ending(): void
+    {
+        $user = $this->userFor($this->productionBranch);
+        $idle = ['wash' => ['beginning' => 0, 'ending' => 0], 'dry' => ['beginning' => 0, 'ending' => 0]];
+
+        $yesterday = ZReading::query()->create($this->readingAttributes($this->productionBranch, $user, today()->subDay()->toDateString(), [
+            1 => ['wash' => ['beginning' => 90, 'ending' => 100, 'total' => 10], 'dry' => ['beginning' => 50, 'ending' => 60, 'total' => 10]],
+            2 => $idle,
+        ]));
+
+        // The form shows yesterday's ending as the beginning, and knows yesterday's ending.
+        $this->actingAs($user)->get(route('admin.z-readings.create', ['business_date' => today()->toDateString()]))
+            ->assertOk()
+            ->assertViewHas('machineCounters', fn ($c) => $c[1]['wash']['beginning'] === 100)
+            ->assertViewHas('previousEndings', fn ($p) => $p[1]['wash'] === 100);
+
+        // The actual Wash 1 counter this morning reads 0102 (yesterday really closed at 102).
+        $this->actingAs($user)->post(route('admin.z-readings.store'), [
+            'business_date' => today()->toDateString(),
+            'machine_counters' => [
+                1 => ['wash' => ['beginning' => 102, 'ending' => 110], 'dry' => ['beginning' => 60, 'ending' => 65]],
+                2 => $idle,
+            ],
+        ])->assertSessionHasNoErrors()
+            ->assertSessionHas('success', fn ($m) => str_contains($m, 'Wash 1 ending 0100 → 0102'));
+
+        $previous = $yesterday->fresh()->machine_counters;
+        $this->assertSame(102, $previous[1]['wash']['ending']);
+        $this->assertSame(12, $previous[1]['wash']['total']);
+        $this->assertSame(60, $previous[1]['dry']['ending']); // unchanged
+
+        $today = ZReading::query()->whereDate('business_date', today())->firstOrFail()->machine_counters;
+        $this->assertSame(102, $today[1]['wash']['beginning']);
+        $this->assertSame(8, $today[1]['wash']['total']);
+        $this->assertDatabaseHas('activity_logs', ['action' => 'z_reading_machine_counters_synced']);
+    }
+
+    public function test_editing_a_past_ending_updates_the_next_day_beginning(): void
+    {
+        $user = $this->userFor($this->productionBranch);
+        $idle = ['wash' => ['beginning' => 0, 'ending' => 0], 'dry' => ['beginning' => 0, 'ending' => 0]];
+
+        ZReading::query()->create($this->readingAttributes($this->productionBranch, $user, today()->subDays(2)->toDateString(), [
+            1 => ['wash' => ['beginning' => 80, 'ending' => 90], 'dry' => ['beginning' => 0, 'ending' => 0]],
+            2 => $idle,
+        ]));
+        $yesterday = ZReading::query()->create($this->readingAttributes($this->productionBranch, $user, today()->subDay()->toDateString(), [
+            1 => ['wash' => ['beginning' => 90, 'ending' => 100], 'dry' => ['beginning' => 0, 'ending' => 0]],
+            2 => $idle,
+        ]));
+        $todayReading = ZReading::query()->create(array_merge($this->readingAttributes($this->productionBranch, $user, today()->toDateString(), [
+            1 => ['wash' => ['beginning' => 100, 'ending' => 120], 'dry' => ['beginning' => 0, 'ending' => 0]],
+            2 => $idle,
+        ]), ['reading_number' => 'ZR-TODAY']));
+
+        // Re-open yesterday and set the ending to the real counter, 0105.
+        $this->actingAs($user)->post(route('admin.z-readings.store'), [
+            'business_date' => today()->subDay()->toDateString(),
+            'machine_counters' => [
+                1 => ['wash' => ['beginning' => 90, 'ending' => 105], 'dry' => ['beginning' => 0, 'ending' => 0]],
+                2 => $idle,
+            ],
+        ])->assertSessionHasNoErrors();
+
+        $this->assertSame(105, $yesterday->fresh()->machine_counters[1]['wash']['ending']);
+        $next = $todayReading->fresh()->machine_counters;
+        $this->assertSame(105, $next[1]['wash']['beginning']);
+        $this->assertSame(120, $next[1]['wash']['ending']);
+        $this->assertSame(15, $next[1]['wash']['total']);
+
+        // And today's form opens with the matching beginning.
+        $this->actingAs($user)->get(route('admin.z-readings.create', ['business_date' => today()->toDateString()]))
+            ->assertViewHas('machineCounters', fn ($c) => $c[1]['wash']['beginning'] === 105 && $c[1]['wash']['total'] === 15);
+    }
+
     public function test_no_machine_branch_has_no_machine_counters_and_sees_cycles_run_for_its_laundry(): void
     {
         $user = $this->userFor($this->dropoffBranch);
