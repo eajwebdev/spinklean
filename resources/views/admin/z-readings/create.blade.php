@@ -193,6 +193,55 @@
             </div>
         </div>
 
+        <!-- Income Breakdown: Job Orders + Baggage -->
+        @php
+            $income = $summary['income_breakdown'];
+            $showBank = (float) $income['total']['bank'] > 0;
+        @endphp
+        <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
+            <div class="mb-3">
+                <h2 class="text-base font-semibold">Income Breakdown</h2>
+                <p class="text-xs text-muted">Payments received at this branch today: Job Order income + Baggage income, by Cash and GCash.</p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-border text-xs uppercase text-muted dark:border-gray-800">
+                        <tr>
+                            <th class="py-2 pr-3">Source</th>
+                            <th class="py-2 pr-3 text-right">Cash</th>
+                            <th class="py-2 pr-3 text-right">GCash</th>
+                            @if($showBank)<th class="py-2 pr-3 text-right">Bank</th>@endif
+                            <th class="py-2 text-right">Total</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-border dark:divide-gray-800">
+                        @foreach([
+                            ['Job Order Income', $income['job_orders'], 'payment'],
+                            ['Baggage Income', $income['baggage'], 'bag'],
+                        ] as [$label, $row, $unit])
+                            <tr>
+                                <td class="py-2 pr-3">
+                                    <span class="font-medium">{{ $label }}</span>
+                                    <span class="text-xs text-muted">· {{ $row['count'] }} {{ $unit }}{{ $row['count'] === 1 ? '' : 's' }}</span>
+                                </td>
+                                <td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($row['cash'], 2) }}</td>
+                                <td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($row['gcash'], 2) }}</td>
+                                @if($showBank)<td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($row['bank'], 2) }}</td>@endif
+                                <td class="py-2 text-right font-semibold tabular-nums">{{ $currency }} {{ number_format($row['total'], 2) }}</td>
+                            </tr>
+                        @endforeach
+                        <tr class="bg-smoke font-semibold dark:bg-gray-950">
+                            <td class="py-2 pl-2 pr-3">Total Income</td>
+                            <td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($income['total']['cash'], 2) }}</td>
+                            <td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($income['total']['gcash'], 2) }}</td>
+                            @if($showBank)<td class="py-2 pr-3 text-right tabular-nums">{{ $currency }} {{ number_format($income['total']['bank'], 2) }}</td>@endif
+                            <td class="py-2 pr-2 text-right tabular-nums">{{ $currency }} {{ number_format($income['total']['total'], 2) }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
         <!-- Cash Count and Balances Side by Side -->
         <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
             <!-- Left Column: Cash Count -->

@@ -66,6 +66,7 @@
             <div class="rounded-lg border border-border bg-white p-3 shadow-sm dark:border-gray-800 dark:bg-gray-900">
                 <p class="text-xs text-muted">Sales today</p>
                 <p class="text-xl font-semibold text-primary">{{ $currency }} {{ number_format($todayTotal, 2) }}</p>
+                <p class="text-xs text-muted">Cash {{ number_format($todayCash, 2) }} · GCash {{ number_format($todayGcash, 2) }}</p>
             </div>
         </div>
 

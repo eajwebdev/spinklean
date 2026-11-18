@@ -160,6 +160,17 @@
                     <tr><td colspan="3" class="center">No inventory usage</td></tr>
                 @endforelse
             </table>
+            @php
+                $income = data_get($details, 'income_breakdown');
+            @endphp
+            @if($income)
+                <table style="margin-top:4px;">
+                    <tr><th>Income</th><th>Cash</th><th>GCash</th><th>Total</th></tr>
+                    <tr><td>Job Order Income</td><td class="right">{{ $money($income['job_orders']['cash']) }}</td><td class="right">{{ $money($income['job_orders']['gcash']) }}</td><td class="right">{{ $money($income['job_orders']['total']) }}</td></tr>
+                    <tr><td>Baggage Income</td><td class="right">{{ $money($income['baggage']['cash']) }}</td><td class="right">{{ $money($income['baggage']['gcash']) }}</td><td class="right">{{ $money($income['baggage']['total']) }}</td></tr>
+                    <tr class="total"><td>Total Income</td><td class="right">{{ $money($income['total']['cash']) }}</td><td class="right">{{ $money($income['total']['gcash']) }}</td><td class="right">{{ $money($income['total']['total']) }}</td></tr>
+                </table>
+            @endif
             <table style="margin-top:4px;">
                 <tr><td>Cash Collections + Cash In</td><td class="right">{{ $money($cashOnHand) }}</td></tr>
                 <tr><td>Store Cash Expenses</td><td class="right">{{ $money($storeCashExpenses) }}</td></tr>

@@ -71,6 +71,73 @@ class BaggageCounterTest extends TestCase
         ]);
     }
 
+    public function test_baggage_income_is_counted_in_the_branch_z_reading(): void
+    {
+        $this->deposit(1, 'small');                                                     // cash 20
+        $this->deposit(2, 'large', ['payment_type' => 'gcash', 'payment_reference_no' => 'GC1']); // gcash 50
+        $this->deposit(3, 'medium');                                                    // cash 30, then voided
+        $voided = BaggageDeposit::query()->where('tag_number', 3)->firstOrFail();
+        $this->actingAs($this->manager)->patch(route('admin.baggage.void', $voided))->assertSessionHasNoErrors();
+
+        // A normal laundry job order paid PHP 100 cash + PHP 40 GCash at this branch today.
+        $customer = \App\Models\Customer::query()->create(['branch_id' => $this->branch->id, 'name' => 'Maria', 'billing_type' => 'regular', 'is_active' => true]);
+        $laundry = JobOrder::query()->create([
+            'branch_id' => $this->branch->id, 'customer_id' => $customer->id, 'job_order_number' => 'JO-LAUNDRY-1',
+            'status' => 'pending', 'subtotal' => 140, 'total' => 140, 'paid_amount' => 140, 'balance' => 0,
+        ]);
+        foreach (['cash' => 100, 'gcash' => 40] as $type => $amount) {
+            Payment::query()->create([
+                'branch_id' => $this->branch->id, 'collected_branch_id' => $this->branch->id, 'job_order_id' => $laundry->id,
+                'customer_id' => $customer->id, 'payment_number' => 'PAY-'.$type, 'payment_type' => $type,
+                'amount' => $amount, 'settlement_status' => 'local', 'paid_at' => now(),
+            ]);
+        }
+
+        $manager = $this->manager->forceFill(['access' => ['job_orders', 'z_readings']]);
+        $manager->save();
+
+        $summary = $this->actingAs($manager)
+            ->get(route('admin.z-readings.create', ['business_date' => today()->toDateString()]))
+            ->assertOk()
+            ->viewData('summary');
+
+        $this->assertEquals(120, $summary['expected_cash_amount']);        // 100 job order + 20 baggage
+        $this->assertEquals(120, $summary['expected_cash_drawer_amount']);
+        $this->assertEquals(90, $summary['expected_gcash_amount']);         // 40 job order + 50 baggage
+        $this->assertSame(3, $summary['transaction_count']); // 1 laundry + 2 bags; voided deposit excluded
+
+        $rows = collect($summary['service_totals']);
+        $services = $rows->pluck('total_amount', 'service_name');
+        $this->assertEquals(20, $services['Baggage - Small item']);
+        $this->assertEquals(50, $services['Baggage - Large to XL item']);
+        $this->assertArrayNotHasKey('Baggage - Medium item', $services->all());
+        $this->assertSame(['Baggage Storage'], $rows->pluck('category_name')->unique()->values()->all());
+
+        // Income breakdown: Job Order income + Baggage income, by Cash / GCash.
+        $income = $summary['income_breakdown'];
+        $this->assertEquals(['cash' => 20, 'gcash' => 50, 'bank' => 0, 'total' => 70, 'count' => 2], $income['baggage']);
+        $this->assertEquals(['cash' => 100, 'gcash' => 40, 'bank' => 0, 'total' => 140, 'count' => 2], $income['job_orders']);
+        $this->assertEquals(['cash' => 120, 'gcash' => 90, 'bank' => 0, 'total' => 210, 'count' => 4], $income['total']);
+
+        // Baggage Counter page shows the same cash / GCash split.
+        $this->actingAs($this->cashier)->get(route('admin.baggage.index'))
+            ->assertOk()
+            ->assertSee('Cash 20.00 · GCash 50.00');
+
+        // Saving the Z Reading keeps those figures.
+        $this->actingAs($manager)->post(route('admin.z-readings.store'), [
+            'business_date' => today()->toDateString(),
+            'cash_count' => ['100' => 1, '20' => 1],
+            'actual_gcash_amount' => 90,
+        ])->assertSessionHasNoErrors();
+        $this->assertDatabaseHas('z_readings', [
+            'branch_id' => $this->branch->id,
+            'expected_total_amount' => 210,
+            'actual_total_amount' => 210,
+            'over_short_amount' => 0,
+        ]);
+    }
+
     private function deposit(int $tag, string $size = 'small', array $overrides = [], ?User $as = null)
     {
         return $this->actingAs($as ?? $this->cashier)->post(route('admin.baggage.store'), array_merge([

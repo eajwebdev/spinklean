@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\BaggageDeposit;
 use App\Models\Branch;
 use App\Models\BranchExpense;
 use App\Models\DailyTaskCompletion;
@@ -541,7 +542,40 @@ class ZReadingController extends Controller
                 ])->values()->all(),
         ])->values()->all();
 
+        // Income split: Job Order payments vs Baggage Counter deposits, each by Cash / GCash / Bank.
+        $baggageOrderIds = BaggageDeposit::query()
+            ->whereIn('job_order_id', $payments->pluck('job_order_id')->filter()->unique())
+            ->pluck('job_order_id')
+            ->flip();
+        [$baggagePayments, $jobOrderPayments] = $payments->partition(
+            fn (Payment $payment) => $payment->job_order_id && $baggageOrderIds->has($payment->job_order_id)
+        );
+        $incomeSplit = function ($items): array {
+            $byType = $items->groupBy('payment_type')->map(fn ($group) => round((float) $group->sum('amount'), 2));
+
+            return [
+                'cash' => (float) ($byType['cash'] ?? 0),
+                'gcash' => (float) ($byType['gcash'] ?? 0),
+                'bank' => (float) ($byType['bank'] ?? 0),
+                'total' => round((float) $items->sum('amount'), 2),
+                'count' => $items->count(),
+            ];
+        };
+        $jobOrderIncome = $incomeSplit($jobOrderPayments);
+        $baggageIncome = $incomeSplit($baggagePayments);
+
         return [
+            'income_breakdown' => [
+                'job_orders' => $jobOrderIncome,
+                'baggage' => $baggageIncome,
+                'total' => [
+                    'cash' => round($jobOrderIncome['cash'] + $baggageIncome['cash'], 2),
+                    'gcash' => round($jobOrderIncome['gcash'] + $baggageIncome['gcash'], 2),
+                    'bank' => round($jobOrderIncome['bank'] + $baggageIncome['bank'], 2),
+                    'total' => round($jobOrderIncome['total'] + $baggageIncome['total'], 2),
+                    'count' => $jobOrderIncome['count'] + $baggageIncome['count'],
+                ],
+            ],
             'expected_cash_amount' => $financial['cash_collections'],
             'cash_expense_amount' => $financial['store_cash_expenses'],
             'expected_cash_drawer_amount' => $financial['expected_cash_drawer'],

@@ -85,6 +85,8 @@ class BaggageController extends Controller
             'tags' => $tags->concat($outOfRange)->values(),
             'today' => $today,
             'todayTotal' => (float) $today->whereNull('voided_at')->sum('amount'),
+            'todayCash' => (float) $today->whereNull('voided_at')->where('payment_type', 'cash')->sum('amount'),
+            'todayGcash' => (float) $today->whereNull('voided_at')->where('payment_type', 'gcash')->sum('amount'),
         ]);
     }
 
