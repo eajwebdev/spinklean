@@ -138,13 +138,133 @@ class BaggageCounterTest extends TestCase
         ]);
     }
 
+    /** One customer, one cubicle, paid at the current rate. */
     private function deposit(int $tag, string $size = 'small', array $overrides = [], ?User $as = null)
     {
+        return $this->depositMany([[$tag, $size]], $overrides, $as);
+    }
+
+    /**
+     * One customer ticket over several cubicles.
+     *
+     * @param  array<int, array{0:int, 1:string, 2?:float}>  $cubicles  [number, size, amount (defaults to the rate)]
+     */
+    private function depositMany(array $cubicles, array $overrides = [], ?User $as = null)
+    {
+        $rates = BaggageCounter::rates($this->branch);
+
         return $this->actingAs($as ?? $this->cashier)->post(route('admin.baggage.store'), array_merge([
-            'tag_number' => $tag,
-            'size' => $size,
+            'customer_name' => 'Juan Dela Cruz',
+            'customer_phone' => '09171112222',
+            'cubicles' => collect($cubicles)->map(fn (array $c) => [
+                'number' => $c[0],
+                'size' => $c[1],
+                'amount' => $c[2] ?? (float) ($rates->get($c[1])?->price ?? 0),
+            ])->all(),
             'payment_type' => 'cash',
         ], $overrides));
+    }
+
+    public function test_one_customer_can_take_several_cubicles_under_one_claim_tag(): void
+    {
+        Carbon::setTestNow('2026-11-19 09:00:00');
+
+        $this->depositMany([[1, 'small', 20], [2, 'large', 60], [3, 'overnight', 100]], [
+            'customer_name' => 'Ana Reyes',
+            'customer_phone' => '0917 555 1234',
+            'payment_type' => 'gcash',
+            'payment_reference_no' => 'GC-77',
+        ])->assertSessionHasNoErrors();
+
+        $deposits = BaggageDeposit::query()->orderBy('tag_number')->get();
+        $this->assertSame([1, 2, 3], $deposits->pluck('tag_number')->all());
+        $this->assertSame([1], $deposits->pluck('claim_tag')->unique()->values()->all(), 'All cubicles share claim tag #01.');
+        $this->assertCount(1, $deposits->pluck('ticket_code')->unique());
+        $this->assertEquals([20, 60, 100], $deposits->pluck('amount')->map(fn ($a) => (float) $a)->all(), 'Each cubicle keeps its own payment.');
+        $this->assertSame('2026-11-20 09:00:00', $deposits[2]->due_at->toDateTimeString());
+        $this->assertSame(['Ana Reyes'], $deposits->pluck('customer_name')->unique()->values()->all());
+
+        // One sale, one payment, totalled under the customer.
+        $order = JobOrder::query()->sole();
+        $this->assertEquals(180, (float) $order->total);
+        $this->assertCount(3, $order->items);
+        $this->assertSame('Ana Reyes', $order->customer->name);
+        $this->assertSame('0917 555 1234', $order->customer->phone);
+        $payment = Payment::query()->sole();
+        $this->assertEquals(180, (float) $payment->amount);
+        $this->assertSame('gcash', $payment->payment_type);
+
+        // The counter shows the ticket.
+        $this->actingAs($this->cashier)->get(route('admin.baggage.index'))
+            ->assertOk()
+            ->assertViewHas('tickets', fn ($tickets) => $tickets->count() === 1 && $tickets->first()['total'] === 180.0 && count($tickets->first()['cubicles']) === 3)
+            ->assertViewHas('heldClaimTags', [1]);
+
+        // The same customer number is reused next time.
+        $this->depositMany([[4, 'small']], ['customer_name' => 'Ana R.', 'customer_phone' => '0917 555 1234'])->assertSessionHasNoErrors();
+        $this->assertSame(1, \App\Models\Customer::query()->where('phone', '0917 555 1234')->count());
+
+        Carbon::setTestNow();
+    }
+
+    public function test_claim_one_cubicle_then_claim_all(): void
+    {
+        $this->depositMany([[1, 'small'], [2, 'medium'], [3, 'large']])->assertSessionHasNoErrors();
+        $first = BaggageDeposit::query()->where('tag_number', 1)->sole();
+
+        // Claim only the first cubicle: it is free again, the others stay.
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.release', $first))->assertSessionHasNoErrors();
+        $this->assertNotNull($first->fresh()->released_at);
+        $this->assertEquals([2, 3], BaggageDeposit::query()->active()->orderBy('tag_number')->pluck('tag_number')->all());
+
+        // Tag card #01 is still with the customer: cubicle 01 can be used, but not as a new claim tag.
+        $this->actingAs($this->cashier)->get(route('admin.baggage.index'))->assertViewHas('heldClaimTags', [1]);
+        $this->depositMany([[1, 'small']], ['customer_name' => 'Other'])->assertSessionHasErrors('cubicles');
+        $this->depositMany([[1, 'small'], [4, 'small']], ['customer_name' => 'Other'])->assertSessionHasNoErrors();
+        $this->assertSame(4, BaggageDeposit::query()->where('customer_name', 'Other')->value('claim_tag'));
+
+        // Claim all frees every remaining cubicle of the first ticket.
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.release-all', BaggageDeposit::query()->where('tag_number', 2)->whereNull('released_at')->sole()))
+            ->assertSessionHasNoErrors();
+        $this->assertSame(0, BaggageDeposit::query()->active()->where('customer_name', 'Juan Dela Cruz')->count());
+        $this->assertSame(1, JobOrder::query()->where('status', 'completed')->where('total', 100)->count(), 'The sale is kept.');
+
+        // Nothing left to claim on that ticket.
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.release-all', $first))->assertStatus(422);
+    }
+
+    public function test_voiding_a_ticket_frees_all_its_cubicles_unless_one_was_claimed(): void
+    {
+        $this->depositMany([[1, 'small'], [2, 'medium']])->assertSessionHasNoErrors();
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.void', BaggageDeposit::query()->where('tag_number', 2)->sole()))
+            ->assertSessionHasNoErrors();
+        $this->assertSame(0, BaggageDeposit::query()->active()->count());
+        $this->assertSame('cancelled', JobOrder::query()->sole()->status);
+
+        $this->depositMany([[3, 'small'], [4, 'medium']])->assertSessionHasNoErrors();
+        $three = BaggageDeposit::query()->where('tag_number', 3)->sole();
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.release', $three))->assertSessionHasNoErrors();
+        $this->actingAs($this->cashier)->patch(route('admin.baggage.void', BaggageDeposit::query()->where('tag_number', 4)->sole()))
+            ->assertStatus(422);
+    }
+
+    public function test_customer_name_and_valid_cubicles_are_required(): void
+    {
+        $this->depositMany([[1, 'small']], ['customer_name' => ''])->assertSessionHasErrors('customer_name');
+        $this->depositMany([[1, 'small'], [1, 'medium']])->assertSessionHasErrors('cubicles.1.number');
+        $this->depositMany([[1, 'small', -5]])->assertSessionHasErrors('cubicles.0.amount');
+        $this->depositMany([], ['cubicles' => []])->assertSessionHasErrors('cubicles');
+        $this->assertSame(0, BaggageDeposit::query()->count());
+    }
+
+    public function test_dashboard_counts_each_cubicle_once(): void
+    {
+        $this->manager->update(['access' => ['job_orders', 'dashboard']]);
+        $this->depositMany([[1, 'small', 20], [2, 'large', 50]])->assertSessionHasNoErrors();
+
+        $baggage = $this->actingAs($this->manager)->getJson(route('dashboard.data'))->assertOk()->json('analytics.baggage');
+        $this->assertSame('PHP 70.00', $baggage['total']);
+        $this->assertSame('2', $baggage['bags']);
     }
 
     public function test_cashier_with_job_order_access_sees_the_counter_with_tags(): void
@@ -176,7 +296,7 @@ class BaggageCounterTest extends TestCase
         $this->assertSame('completed', $order->status);
         $this->assertEquals(20, (float) $order->total);
         $this->assertEquals(0, (float) $order->balance);
-        $this->assertSame('Walk-in Customer', $order->customer->name);
+        $this->assertSame('Juan Dela Cruz', $order->customer->name);
         $this->assertSame(0, $order->transfers()->count());
         $this->assertSame(BaggageCounter::CATEGORY, $order->items->first()->service->serviceCategory->name);
 
@@ -186,7 +306,7 @@ class BaggageCounterTest extends TestCase
         $this->assertSame($this->branch->id, (int) $payment->collected_branch_id);
 
         // The same tag cannot be given out twice; another tag can.
-        $this->deposit(1, 'medium')->assertSessionHasErrors('tag_number');
+        $this->deposit(1, 'medium')->assertSessionHasErrors('cubicles');
         $this->deposit(2, 'medium')->assertSessionHasNoErrors();
         $this->assertSame(2, BaggageDeposit::query()->active()->count());
 
@@ -303,7 +423,7 @@ class BaggageCounterTest extends TestCase
 
         // A rate switched off is not offered.
         $small->update(['is_active' => false]);
-        $this->deposit(2, 'small')->assertSessionHasErrors('size');
+        $this->deposit(2, 'small')->assertSessionHasErrors('cubicles.0.size');
     }
 
     public function test_only_managers_change_tag_count_and_tags_must_exist(): void
@@ -314,7 +434,7 @@ class BaggageCounterTest extends TestCase
         $this->assertSame(10, $this->branch->fresh()->baggage_tag_count);
 
         $this->deposit(10)->assertSessionHasNoErrors();
-        $this->deposit(11)->assertSessionHasErrors('tag_number');
+        $this->deposit(11)->assertSessionHasErrors('cubicles.0.number');
     }
 
     public function test_other_branch_cannot_release_the_bag(): void
@@ -348,8 +468,8 @@ class BaggageCounterTest extends TestCase
         $this->actingAs($this->manager)->get(route('admin.baggage.index'))
             ->assertOk()
             ->assertViewHas('tags', fn ($tags) => $tags->isEmpty())
-            ->assertSee('Number of claim tags');
-        $this->deposit(1)->assertSessionHasErrors('tag_number');
+            ->assertSee('Number of cubicles');
+        $this->deposit(1)->assertSessionHasErrors('cubicles');
     }
 
     public function test_dashboard_sales_include_baggage_and_show_baggage_panel(): void

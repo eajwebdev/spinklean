@@ -23,6 +23,12 @@ class JobOrder extends Model
         return $this->hasOne(BaggageDeposit::class);
     }
 
+    /** All cubicles of a baggage ticket (one Job Order per ticket). */
+    public function baggageDeposits()
+    {
+        return $this->hasMany(BaggageDeposit::class);
+    }
+
     public function latestTransfer()
     {
         return $this->hasOne(JobOrderTransfer::class)->latestOfMany();

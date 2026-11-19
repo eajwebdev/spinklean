@@ -148,6 +148,7 @@ Route::middleware(['auth', 'settings.completed', 'system.maintenance', 'billing.
             Route::post('/baggage', [BaggageController::class, 'store'])->name('baggage.store');
             Route::patch('/baggage/settings', [BaggageController::class, 'updateSettings'])->name('baggage.settings');
             Route::patch('/baggage/{deposit}/release', [BaggageController::class, 'release'])->name('baggage.release');
+            Route::patch('/baggage/{deposit}/release-all', [BaggageController::class, 'releaseAll'])->name('baggage.release-all');
             Route::patch('/baggage/{deposit}/void', [BaggageController::class, 'void'])->name('baggage.void');
         });
         Route::middleware('menu.access:payments')->group(function () {

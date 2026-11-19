@@ -111,7 +111,15 @@
     x-data="baggageCounter({
         tags: @js($tags),
         rates: @js($rates),
-        reopenTag: @js(old('tag_number') ? (int) old('tag_number') : null),
+        tickets: @js($tickets),
+        heldClaimTags: @js($heldClaimTags),
+        old: @js(old('cubicles') ? [
+            'customer_name' => old('customer_name'),
+            'customer_phone' => old('customer_phone'),
+            'cubicles' => array_values((array) old('cubicles')),
+            'payment_type' => old('payment_type', 'cash'),
+            'notes' => old('notes'),
+        ] : null),
         tagCount: @js((int) ($branch?->baggage_tag_count ?? 0)),
         settingsOpen: @js($errors->has('baggage_tag_count')),
     })"
@@ -152,7 +160,7 @@
                 </button>
             @endif
             @if($branch)
-                <button type="button" x-show="tags.length > 0" @click="storeNext()" :disabled="freeCount === 0" class="bc-btn bc-btn-primary" title="Store a bag on the next free tag (N)">
+                <button type="button" x-show="tags.length > 0" @click="storeNext()" :disabled="freeCount === 0" class="bc-btn bc-btn-primary" title="Store a bag in the next free cubicle (N)">
                     <span data-lucide="plus" class="h-4 w-4"></span>
                     <span>Store a bag</span>
                     <span class="bc-kbd" style="color:#fff;border-color:rgb(255 255 255 / .5);">N</span>
@@ -161,7 +169,7 @@
         </div>
     </div>
 
-    @if($errors->any() && ! old('tag_number') && ! $errors->has('baggage_tag_count'))
+    @if($errors->any() && ! old('cubicles') && ! $errors->has('baggage_tag_count'))
         <div class="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700" role="alert">
             <span data-lucide="alertTriangle" class="mt-0.5 h-4 w-4 flex-none"></span>
             <span>{{ $errors->first() }}</span>
@@ -183,14 +191,14 @@
                     <span data-lucide="tag" class="h-7 w-7"></span>
                 </div>
                 <h2 class="mt-4 text-lg font-semibold">Set up the Baggage Counter for {{ $branch->name }}</h2>
-                <p class="mx-auto mt-1 max-w-xl text-sm bc-muted">Customers leave a bag, pay, and keep a numbered claim tag. Tell the system how many printed tag cards this branch has to get started.</p>
+                <p class="mx-auto mt-1 max-w-xl text-sm bc-muted">Customers leave bags in numbered cubicles, pay, and keep one claim tag (the number of their first cubicle). Tell the system how many cubicles this branch has to get started.</p>
             </div>
 
             <div class="bc-steps mx-auto mt-6 max-w-3xl">
                 @foreach([
-                    ['Set your tags', 'Match the printed claim cards (e.g. 6 cards = tags 01 to 06).'],
+                    ['Set your cubicles', 'One numbered tag card per cubicle (e.g. 6 cubicles = 01 to 06).'],
                     ['Check the rates', 'Small, Medium, Large/XL and Overnight. Prices are editable per branch.'],
-                    ['Start storing bags', 'Tap a free tag, pick the size, collect Cash or GCash.'],
+                    ['Start storing bags', 'Tap a free cubicle, enter the customer, add more cubicles if needed, collect Cash or GCash.'],
                 ] as $i => [$title, $text])
                     <div class="flex gap-3 rounded-lg p-3" style="background:var(--color-smoke);">
                         <span class="bc-step-no">{{ $i + 1 }}</span>
@@ -206,7 +214,7 @@
                 <form method="POST" action="{{ route('admin.baggage.settings', $branchQuery) }}" class="mx-auto mt-6 max-w-3xl rounded-xl border border-border p-4 dark:border-gray-800">
                     @csrf
                     @method('PATCH')
-                    <p class="text-sm font-semibold">How many claim tags does this branch have?</p>
+                    <p class="text-sm font-semibold">How many cubicles (claim tags) does this branch have?</p>
                     <div class="mt-3 flex flex-wrap items-center gap-2">
                         <template x-for="preset in [6, 10, 12, 20]" :key="preset">
                             <button type="button" class="bc-chip" :aria-pressed="setupCount === preset" @click="setupCount = preset" x-text="preset"></button>
@@ -215,7 +223,7 @@
                         <input type="number" name="baggage_tag_count" x-model.number="setupCount" min="1" max="{{ \App\Support\BaggageCounter::MAX_TAGS }}" class="bc-input bc-tnum" style="width:6rem;" aria-label="Number of claim tags" required>
                         <button type="submit" class="bc-btn bc-btn-primary" :disabled="!(setupCount >= 1)">
                             <span data-lucide="check" class="h-4 w-4"></span>
-                            <span x-text="setupCount >= 1 ? `Create tags 01 to ${String(setupCount).padStart(2, '0')}` : 'Create tags'"></span>
+                            <span x-text="setupCount >= 1 ? `Create cubicles 01 to ${String(setupCount).padStart(2, '0')}` : 'Create cubicles'"></span>
                         </button>
                     </div>
                     @error('baggage_tag_count')<p class="mt-2 text-xs text-red-600">{{ $message }}</p>@enderror
@@ -264,7 +272,7 @@
                 <div class="bc-card bc-kpi bc-tone-free">
                     <div class="bc-kpi-icon bc-soft"><span data-lucide="tag" class="h-4 w-4"></span></div>
                     <div class="min-w-0 flex-1">
-                        <p class="text-xs font-medium bc-muted">Available tags</p>
+                        <p class="text-xs font-medium bc-muted">Free cubicles</p>
                         <p class="bc-kpi-value"><span x-text="freeCount"></span><span class="text-sm font-medium bc-muted"> / <span x-text="tags.length"></span></span></p>
                         <div class="bc-bar mt-2"><span class="bc-fill" :style="`width:${tags.length ? (usedCount / tags.length) * 100 : 0}%`"></span></div>
                         <p class="mt-1 text-[11px] bc-muted"><span x-text="Math.round(tags.length ? (usedCount / tags.length) * 100 : 0)"></span>% in use</p>
@@ -273,8 +281,8 @@
                 <div class="bc-card bc-kpi bc-tone-stored">
                     <div class="bc-kpi-icon bc-soft"><span data-lucide="package" class="h-4 w-4"></span></div>
                     <div>
-                        <p class="text-xs font-medium bc-muted">Bags stored now</p>
-                        <p class="bc-kpi-value" x-text="usedCount"></p>
+                        <p class="text-xs font-medium bc-muted">Cubicles in use</p>
+                        <p class="bc-kpi-value"><span x-text="usedCount"></span><span class="text-sm font-medium bc-muted"> · <span x-text="customerCount"></span> <span x-text="customerCount === 1 ? 'customer' : 'customers'"></span></span></p>
                         <p class="text-[11px] bc-muted" x-text="nextDue ? 'Next due ' + nextDue : 'None waiting'"></p>
                     </div>
                 </div>
@@ -310,7 +318,7 @@
                     </div>
                     <form class="bc-find" @submit.prevent="findTag()">
                         <span data-lucide="search" class="h-4 w-4 bc-muted"></span>
-                        <input x-ref="find" x-model="findValue" inputmode="numeric" class="bc-input" placeholder="Tag # then Enter" aria-label="Open a tag by number">
+                        <input x-ref="find" x-model="findValue" class="bc-input" placeholder="Tag # or name" aria-label="Open a claim tag, cubicle or customer">
                     </form>
                 </div>
 
@@ -325,7 +333,7 @@
                                 'bc-tone-stored': tag.deposit && !isOverdue(tag.deposit),
                                 'bc-tone-overdue bc-tag-overdue': tag.deposit && isOverdue(tag.deposit),
                             }"
-                            :aria-label="tag.deposit ? `Tag ${tag.label}, ${statusOf(tag)}, open to release` : `Tag ${tag.label}, free, store a bag`"
+                            :aria-label="tag.deposit ? `Cubicle ${tag.label}, ${statusOf(tag)}, claim tag ${tag.deposit.claim_label}, open to claim` : `Cubicle ${tag.label}, free, store a bag`"
                         >
                             <div class="flex items-start justify-between gap-2">
                                 <span class="bc-tag-number" x-text="tag.label"></span>
@@ -333,15 +341,20 @@
                             </div>
 
                             <template x-if="!tag.deposit">
-                                <div class="mt-auto flex items-center gap-1.5 pt-4 text-sm font-semibold" style="color:var(--bc);">
-                                    <span data-lucide="plus" class="h-4 w-4"></span>
-                                    Store a bag
+                                <div class="mt-auto pt-4">
+                                    <p x-show="isHeldTag(tag.number)" class="text-[11px] bc-muted" x-text="'Tag card #' + tag.label + ' is out'"></p>
+                                    <div class="flex items-center gap-1.5 text-sm font-semibold" style="color:var(--bc);">
+                                        <span data-lucide="plus" class="h-4 w-4"></span>
+                                        Store a bag
+                                    </div>
                                 </div>
                             </template>
 
                             <template x-if="tag.deposit">
                                 <div class="mt-auto pt-3">
-                                    <p class="truncate text-xs font-semibold" x-text="tag.deposit.size_label"></p>
+                                    <p class="truncate text-xs font-semibold" x-text="tag.deposit.customer_name || 'Walk-in'"></p>
+                                    <p class="truncate text-[11px] font-semibold" style="color:var(--bc);" x-text="'Tag #' + tag.deposit.claim_label + (ticketCount(tag) > 1 ? ' · ' + ticketCount(tag) + ' cubicles' : '')"></p>
+                                    <p class="truncate text-[11px] bc-muted" x-text="tag.deposit.size_label"></p>
                                     <p class="text-[11px] bc-muted" x-text="'In ' + tag.deposit.deposited_at_label"></p>
                                     <p class="mt-1 text-sm font-bold bc-tnum" style="color:var(--bc);" x-text="countdown(tag.deposit)"></p>
                                     <div class="bc-bar mt-1.5"><span class="bc-fill" :style="`width:${progress(tag.deposit)}%`"></span></div>
@@ -352,12 +365,12 @@
                 </div>
 
                 <div x-show="visibleTags.length === 0" class="rounded-lg border border-dashed border-border p-8 text-center text-sm bc-muted dark:border-gray-800">
-                    <span x-text="filter === 'overdue' ? 'No overdue bags. Everything is on time.' : (filter === 'stored' ? 'No bags stored right now.' : 'No free tags right now. Every tag is in use.')"></span>
+                    <span x-text="filter === 'overdue' ? 'No overdue bags. Everything is on time.' : (filter === 'stored' ? 'No bags stored right now.' : 'No free cubicles right now. Every cubicle is in use.')"></span>
                 </div>
 
                 <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border pt-3 text-[11px] bc-muted dark:border-gray-800">
-                    <span class="inline-flex items-center gap-1.5"><span class="bc-kbd">N</span> store next free tag</span>
-                    <span class="inline-flex items-center gap-1.5"><span class="bc-kbd">/</span> find a tag</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="bc-kbd">N</span> store in next free cubicle</span>
+                    <span class="inline-flex items-center gap-1.5"><span class="bc-kbd">/</span> find a tag or customer</span>
                     <span class="inline-flex items-center gap-1.5"><span class="bc-kbd">Esc</span> close</span>
                     <span class="ml-auto">Rates:
                         @foreach($rates as $rate)
@@ -393,6 +406,8 @@
                     <thead style="background:var(--color-smoke);" class="dark:bg-gray-950">
                         <tr>
                             <th>Tag</th>
+                            <th>Cubicle</th>
+                            <th>Customer</th>
                             <th>Size</th>
                             <th>In</th>
                             <th>Out</th>
@@ -406,14 +421,16 @@
                             @php
                                 [$tone, $status] = match (true) {
                                     (bool) $row->voided_at => ['bc-tone-overdue', 'Voided'],
-                                    (bool) $row->released_at && $row->released_at->greaterThan($row->due_at) => ['bc-tone-stored', 'Released late'],
-                                    (bool) $row->released_at => ['bc-tone-free', 'Released'],
+                                    (bool) $row->released_at && $row->released_at->greaterThan($row->due_at) => ['bc-tone-stored', 'Claimed late'],
+                                    (bool) $row->released_at => ['bc-tone-free', 'Claimed'],
                                     $row->isOverdue() => ['bc-tone-overdue', 'Overdue'],
                                     default => ['bc-tone-stored', 'Stored'],
                                 };
                             @endphp
                             <tr @if($row->voided_at) style="opacity:.6;" @endif>
-                                <td class="font-bold bc-tnum">#{{ $row->tagLabel() }}</td>
+                                <td class="font-bold bc-tnum">#{{ $row->claimLabel() }}</td>
+                                <td class="bc-tnum">#{{ $row->tagLabel() }}</td>
+                                <td>{{ $row->customer_name ?? '—' }}@if($row->customer_phone)<span class="block text-[11px] bc-muted">{{ $row->customer_phone }}</span>@endif</td>
                                 <td>{{ \App\Support\BaggageCounter::label($row->size) }}</td>
                                 <td class="whitespace-nowrap bc-tnum">{{ $row->deposited_at?->format('h:i A') }}<span class="block text-[11px] bc-muted">{{ $row->depositor?->name }}</span></td>
                                 <td class="whitespace-nowrap bc-tnum">{{ $row->released_at?->format('h:i A') ?? '—' }}<span class="block text-[11px] bc-muted">{{ $row->releaser?->name }}</span></td>
@@ -435,55 +452,88 @@
         @endif
     </div>
 
-    {{-- ===== Store a bag ===== --}}
-    <div x-cloak x-show="depositTag" x-transition.opacity class="bc-modal-wrap" @keydown.escape.window="depositTag = null" role="dialog" aria-modal="true" aria-labelledby="bc-deposit-title">
-        <form method="POST" action="{{ route('admin.baggage.store', $branchQuery) }}" @click.outside="depositTag = null" class="bc-modal" x-ref="depositForm">
+    {{-- ===== Store baggage (one customer, one or more cubicles) ===== --}}
+    <div x-cloak x-show="depositOpen" x-transition.opacity class="bc-modal-wrap" @keydown.escape.window="depositOpen = false" role="dialog" aria-modal="true" aria-labelledby="bc-deposit-title">
+        <form method="POST" action="{{ route('admin.baggage.store', $branchQuery) }}" @click.outside="depositOpen = false" @submit="submitting = true" class="bc-modal" style="max-width:34rem;" x-ref="depositForm">
             @csrf
-            <input type="hidden" name="tag_number" :value="depositTag?.number">
             <div class="bc-modal-head">
                 <div class="flex items-center gap-3">
-                    <span class="bc-tag-badge bc-tone-free bc-soft" x-text="depositTag?.label"></span>
+                    <span class="bc-tag-badge bc-tone-free bc-soft" x-text="claimLabel || '--'"></span>
                     <div>
-                        <h2 id="bc-deposit-title" class="text-base font-semibold">Store a bag</h2>
-                        <p class="text-xs bc-muted">Give the customer claim tag <strong x-text="'#' + (depositTag?.label || '')"></strong></p>
+                        <h2 id="bc-deposit-title" class="text-base font-semibold">Store baggage</h2>
+                        <p class="text-xs bc-muted" x-show="claimLabel">Give the customer claim tag <strong x-text="'#' + claimLabel"></strong></p>
+                        <p class="text-xs text-red-600" x-show="!claimLabel">Every tag card of these cubicles is still out. Add a different cubicle.</p>
                     </div>
                 </div>
-                <button type="button" @click="depositTag = null" class="rounded-lg p-2 hover:bg-smoke dark:hover:bg-gray-800" aria-label="Close"><span data-lucide="x" class="h-5 w-5"></span></button>
+                <button type="button" @click="depositOpen = false" class="rounded-lg p-2 hover:bg-smoke dark:hover:bg-gray-800" aria-label="Close"><span data-lucide="x" class="h-5 w-5"></span></button>
             </div>
 
             <div class="bc-modal-body space-y-5">
-                @if($errors->any() && old('tag_number'))
+                @if($errors->any() && old('cubicles'))
                     <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">{{ $errors->first() }}</div>
                 @endif
 
-                <div x-show="freeTags.length > 1">
-                    <label class="mb-1.5 block text-xs font-semibold uppercase tracking-wider bc-muted" for="bc-tag-switch">Claim tag</label>
-                    <select id="bc-tag-switch" class="bc-input" @change="switchTag($event.target.value)">
-                        <template x-for="tag in freeTags" :key="tag.number">
-                            <option :value="tag.number" :selected="depositTag && tag.number === depositTag.number" x-text="'#' + tag.label"></option>
-                        </template>
-                    </select>
-                </div>
-
                 <fieldset>
-                    <legend class="mb-1.5 text-xs font-semibold uppercase tracking-wider bc-muted">1 · Bag size</legend>
-                    <div class="grid grid-cols-2 gap-2">
-                        <template x-for="(rate, index) in rates" :key="rate.size">
-                            <label class="bc-choice" :data-active="size === rate.size">
-                                <input type="radio" name="size" :value="rate.size" x-model="size" class="sr-only" required>
-                                <span class="flex items-center justify-between gap-2">
-                                    <span class="text-sm font-semibold" x-text="rate.label"></span>
-                                    <span class="bc-kbd" x-text="index + 1"></span>
-                                </span>
-                                <span class="text-base font-bold text-primary bc-tnum">{{ $currency }} <span x-text="money(rate.price)"></span></span>
-                                <span class="text-[11px] bc-muted" x-text="'Up to ' + rate.hours + ' hours'"></span>
-                            </label>
-                        </template>
+                    <legend class="mb-1.5 text-xs font-semibold uppercase tracking-wider bc-muted">1 · Customer</legend>
+                    <div class="grid gap-2 sm:grid-cols-2">
+                        <div>
+                            <label class="sr-only" for="bc-customer-name">Customer name</label>
+                            <input id="bc-customer-name" x-ref="customerName" name="customer_name" x-model="customerName" maxlength="255" required placeholder="Customer name" class="bc-input" autocomplete="off">
+                        </div>
+                        <div>
+                            <label class="sr-only" for="bc-customer-phone">Mobile number</label>
+                            <input id="bc-customer-phone" name="customer_phone" x-model="customerPhone" maxlength="30" inputmode="tel" placeholder="Mobile number, e.g. 0917 123 4567" class="bc-input" autocomplete="off">
+                        </div>
                     </div>
                 </fieldset>
 
                 <fieldset>
-                    <legend class="mb-1.5 text-xs font-semibold uppercase tracking-wider bc-muted">2 · Payment</legend>
+                    <legend class="mb-1.5 text-xs font-semibold uppercase tracking-wider bc-muted">2 · Cubicles &amp; payment per cubicle</legend>
+                    <div class="space-y-2">
+                        <template x-for="(row, index) in rows" :key="row.key">
+                            <div class="rounded-xl border border-border p-3 dark:border-gray-800">
+                                <div class="flex items-center gap-2">
+                                    <label class="text-xs font-semibold bc-muted" :for="'bc-cubicle-' + row.key">Cubicle</label>
+                                    <select :id="'bc-cubicle-' + row.key" :name="`cubicles[${index}][number]`" class="bc-input bc-tnum" style="width:6rem;height:2.25rem;" @change="row.number = Number($event.target.value)">
+                                        <template x-for="option in cubicleOptions(row)" :key="option.number">
+                                            <option :value="option.number" :selected="option.number === row.number" x-text="'#' + option.label"></option>
+                                        </template>
+                                    </select>
+                                    <span x-show="row.number === claimNumber" class="bc-pill bc-tone-brand">Claim tag</span>
+                                    <button type="button" x-show="rows.length > 1" @click="removeRow(index)" class="ml-auto rounded-lg p-1.5 text-red-600 hover:bg-red-50 dark:hover:bg-gray-800" :aria-label="'Remove cubicle ' + row.number">
+                                        <span data-lucide="trash" class="h-4 w-4"></span>
+                                    </button>
+                                </div>
+
+                                <input type="hidden" :name="`cubicles[${index}][size]`" :value="row.size">
+                                <div class="mt-2 grid grid-cols-2 gap-1.5 sm:grid-cols-4" role="radiogroup" :aria-label="'Size for cubicle ' + row.number">
+                                    <template x-for="rate in rates" :key="rate.size">
+                                        <button type="button" class="bc-choice" style="padding:.4rem .5rem;" :data-active="row.size === rate.size" :aria-pressed="row.size === rate.size" @click="pickSize(row, rate)">
+                                            <span class="text-xs font-semibold" x-text="rate.label"></span>
+                                            <span class="text-[11px] bc-muted bc-tnum" x-text="money(rate.price) + ' · ' + rate.hours + 'h'"></span>
+                                        </button>
+                                    </template>
+                                </div>
+
+                                <div class="mt-2 flex items-center gap-2">
+                                    <label class="text-xs font-semibold bc-muted" :for="'bc-amount-' + row.key">Payment</label>
+                                    <div class="relative flex-1">
+                                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs bc-muted">{{ $currency }}</span>
+                                        <input :id="'bc-amount-' + row.key" type="number" step="0.01" min="0" :name="`cubicles[${index}][amount]`" x-model="row.amount" required class="bc-input bc-tnum text-right" style="height:2.25rem;padding-left:3rem;">
+                                    </div>
+                                    <span class="whitespace-nowrap text-[11px] bc-muted" x-text="rowRate(row) ? 'Due ' + dueBy(rowRate(row).hours) : 'Pick a size'"></span>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                    <button type="button" @click="addRow()" :disabled="!nextFreeNumber()" class="bc-btn bc-btn-ghost mt-2 w-full" style="height:2.25rem;border-style:dashed;">
+                        <span data-lucide="plus" class="h-4 w-4"></span>
+                        <span x-text="nextFreeNumber() ? 'Add another cubicle (#' + pad(nextFreeNumber()) + ')' : 'No other free cubicle'"></span>
+                    </button>
+                </fieldset>
+
+                <fieldset>
+                    <legend class="mb-1.5 text-xs font-semibold uppercase tracking-wider bc-muted">3 · Payment method</legend>
                     <div class="grid grid-cols-2 gap-2">
                         <label class="bc-choice" :data-active="paymentType === 'cash'" style="flex-direction:row;align-items:center;gap:.6rem;">
                             <input type="radio" name="payment_type" value="cash" x-model="paymentType" class="sr-only">
@@ -496,85 +546,109 @@
                             <span class="text-sm font-semibold">GCash</span>
                         </label>
                     </div>
-                    <input x-show="paymentType === 'gcash'" x-ref="reference" name="payment_reference_no" :required="paymentType === 'gcash'" :disabled="paymentType !== 'gcash'" placeholder="GCash reference number" class="bc-input mt-2" autocomplete="off">
+                    <input x-show="paymentType === 'gcash'" name="payment_reference_no" :required="paymentType === 'gcash'" :disabled="paymentType !== 'gcash'" placeholder="GCash reference number" class="bc-input mt-2" autocomplete="off">
                 </fieldset>
 
                 <div>
                     <label class="mb-1.5 block text-xs font-semibold uppercase tracking-wider bc-muted" for="bc-note">Note <span class="font-normal normal-case">(optional)</span></label>
-                    <input id="bc-note" name="notes" maxlength="255" placeholder="e.g. black trolley, red ribbon" class="bc-input" autocomplete="off">
+                    <input id="bc-note" name="notes" x-model="notes" maxlength="255" placeholder="e.g. black trolley, red ribbon" class="bc-input" autocomplete="off">
                 </div>
 
                 <div class="rounded-xl p-3" style="background:var(--color-smoke);">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm bc-muted">Collect</span>
-                        <span class="text-xl font-bold text-primary bc-tnum">{{ $currency }} <span x-text="money(selectedRate?.price || 0)"></span></span>
-                    </div>
-                    <div class="mt-1 flex items-center justify-between text-xs">
-                        <span class="bc-muted">Due back by</span>
-                        <span class="font-semibold bc-tnum" x-text="selectedRate ? dueBy(selectedRate.hours) : 'Pick a size'"></span>
+                    <template x-for="row in rows" :key="'sum-' + row.key">
+                        <div class="flex items-center justify-between text-xs">
+                            <span class="bc-muted" x-text="'Cubicle #' + pad(row.number) + (rowRate(row) ? ' · ' + rowRate(row).label : '')"></span>
+                            <span class="font-semibold bc-tnum" x-text="money(row.amount)"></span>
+                        </div>
+                    </template>
+                    <div class="mt-2 flex items-center justify-between border-t border-border pt-2 dark:border-gray-700">
+                        <span class="text-sm bc-muted" x-text="'Collect from ' + (customerName.trim() || 'customer')"></span>
+                        <span class="text-xl font-bold text-primary bc-tnum">{{ $currency }} <span x-text="money(depositTotal)"></span></span>
                     </div>
                 </div>
             </div>
 
             <div class="bc-modal-foot">
-                <button type="button" @click="depositTag = null" class="bc-btn bc-btn-ghost">Cancel</button>
-                <button type="submit" :disabled="!size || submitting" @click="submitting = size ? true : false" class="bc-btn bc-btn-primary">
+                <button type="button" @click="depositOpen = false" class="bc-btn bc-btn-ghost">Cancel</button>
+                <button type="submit" :disabled="!canSubmit" class="bc-btn bc-btn-primary">
                     <span data-lucide="check" class="h-4 w-4"></span>
-                    <span x-text="submitting ? 'Saving…' : 'Paid · Store bag'"></span>
+                    <span x-text="submitting ? 'Saving…' : (rows.length > 1 ? `Paid · Store ${rows.length} cubicles` : 'Paid · Store bag')"></span>
                 </button>
             </div>
         </form>
     </div>
 
-    {{-- ===== Release a bag ===== --}}
+    {{-- ===== Claim baggage (one cubicle or the whole ticket) ===== --}}
     <div x-cloak x-show="releaseTag" x-transition.opacity class="bc-modal-wrap" @keydown.escape.window="releaseTag = null" role="dialog" aria-modal="true" aria-labelledby="bc-release-title">
-        <div @click.outside="releaseTag = null" class="bc-modal">
+        <div @click.outside="releaseTag = null" class="bc-modal" style="max-width:32rem;">
             <div class="bc-modal-head">
                 <div class="flex items-center gap-3">
-                    <span class="bc-tag-badge bc-soft" :class="releaseTag?.deposit && isOverdue(releaseTag.deposit) ? 'bc-tone-overdue' : 'bc-tone-stored'" x-text="releaseTag?.label"></span>
-                    <div>
-                        <h2 id="bc-release-title" class="text-base font-semibold">Release bag</h2>
-                        <p class="text-xs bc-muted">Take back the customer's tag copy first.</p>
+                    <span class="bc-tag-badge bc-soft" :class="releaseTag?.deposit && isOverdue(releaseTag.deposit) ? 'bc-tone-overdue' : 'bc-tone-stored'" x-text="releaseTag?.deposit?.claim_label"></span>
+                    <div class="min-w-0">
+                        <h2 id="bc-release-title" class="truncate text-base font-semibold" x-text="currentTicket?.customer_name || 'Claim baggage'"></h2>
+                        <p class="text-xs bc-muted">
+                            <span x-show="currentTicket?.customer_phone" x-text="currentTicket?.customer_phone + ' · '"></span>
+                            Claim tag <strong x-text="'#' + (releaseTag?.deposit?.claim_label || '')"></strong>
+                        </p>
                     </div>
                 </div>
                 <button type="button" @click="releaseTag = null" class="rounded-lg p-2 hover:bg-smoke dark:hover:bg-gray-800" aria-label="Close"><span data-lucide="x" class="h-5 w-5"></span></button>
             </div>
 
             <template x-if="releaseTag?.deposit">
-                <div class="bc-modal-body">
-                    <div class="rounded-xl p-3 text-center" :class="isOverdue(releaseTag.deposit) ? 'bc-tone-overdue' : 'bc-tone-free'" style="background:var(--bc-soft);color:var(--bc);">
-                        <p class="text-xs font-semibold uppercase tracking-wider" x-text="isOverdue(releaseTag.deposit) ? 'Past the time limit' : 'Within the time limit'"></p>
-                        <p class="text-2xl font-bold bc-tnum" x-text="countdown(releaseTag.deposit)"></p>
-                        <div class="bc-bar mx-auto mt-2" style="max-width:16rem;"><span class="bc-fill" :style="`width:${progress(releaseTag.deposit)}%`"></span></div>
+                <div class="bc-modal-body space-y-3">
+                    <p class="text-xs font-semibold uppercase tracking-wider bc-muted" x-text="ticketRows.length > 1 ? ticketActiveCount + ' of ' + ticketRows.length + ' cubicles still at the counter' : 'Cubicle'"></p>
+                    <div class="space-y-2">
+                        <template x-for="row in ticketRows" :key="'ticket-' + row.number">
+                            <div class="flex items-center gap-3 rounded-xl border p-2.5"
+                                :class="!row.deposit ? 'bc-tone-free' : (isOverdue(row.deposit) ? 'bc-tone-overdue' : 'bc-tone-stored')"
+                                :style="`border-color:var(--bc-line);${row.number === releaseTag.number ? 'box-shadow:0 0 0 2px var(--bc) inset;' : ''}${row.deposit ? '' : 'opacity:.65;'}`">
+                                <span class="bc-tag-badge bc-soft" style="min-width:2.5rem;height:2.5rem;font-size:1.05rem;" x-text="row.label"></span>
+                                <div class="min-w-0 flex-1">
+                                    <p class="truncate text-sm font-semibold" x-text="row.size_label + ' · {{ $currency }} ' + money(row.amount)"></p>
+                                    <p class="text-xs font-semibold bc-tnum" style="color:var(--bc);" x-text="row.deposit ? countdown(row.deposit) : 'Claimed ' + (row.released_at_label || '') + (row.released_by ? ' by ' + row.released_by : '')"></p>
+                                </div>
+                                <template x-if="row.deposit">
+                                    <form method="POST" :action="row.deposit.release_url">
+                                        @csrf
+                                        @method('PATCH')
+                                        <button type="submit" class="bc-btn bc-btn-ghost" style="height:2.25rem;padding:0 .8rem;">
+                                            <span data-lucide="package-check" class="h-4 w-4"></span>
+                                            Claim
+                                        </button>
+                                    </form>
+                                </template>
+                            </div>
+                        </template>
                     </div>
-                    <div class="mt-3">
-                        <div class="bc-kv"><span class="bc-muted">Size</span><span class="font-medium" x-text="releaseTag.deposit.size_label"></span></div>
-                        <div class="bc-kv"><span class="bc-muted">Paid</span><span class="font-medium bc-tnum">{{ $currency }} <span x-text="money(releaseTag.deposit.amount)"></span> · <span x-text="releaseTag.deposit.payment_type === 'gcash' ? 'GCash' : 'Cash'"></span></span></div>
+
+                    <div>
+                        <div class="bc-kv"><span class="bc-muted">Total paid</span><span class="font-medium bc-tnum">{{ $currency }} <span x-text="money(currentTicket?.total ?? releaseTag.deposit.amount)"></span> · <span x-text="releaseTag.deposit.payment_type === 'gcash' ? 'GCash' : 'Cash'"></span></span></div>
                         <div class="bc-kv"><span class="bc-muted">Stored at</span><span class="bc-tnum" x-text="releaseTag.deposit.deposited_at_label"></span></div>
-                        <div class="bc-kv"><span class="bc-muted">Due back</span><span class="bc-tnum" x-text="releaseTag.deposit.due_at_label"></span></div>
                         <div class="bc-kv"><span class="bc-muted">Stored for</span><span class="font-medium bc-tnum" x-text="elapsed(releaseTag.deposit)"></span></div>
+                        <div class="bc-kv" x-show="currentTicket?.job_order_number"><span class="bc-muted">Sale</span><a :href="currentTicket?.job_order_url" class="font-medium text-primary hover:underline" x-text="currentTicket?.job_order_number"></a></div>
                         <div class="bc-kv" x-show="releaseTag.deposit.notes"><span class="bc-muted">Note</span><span class="text-right" x-text="releaseTag.deposit.notes"></span></div>
                     </div>
                 </div>
             </template>
 
-            <form method="POST" :action="releaseTag?.deposit?.release_url" class="bc-modal-foot">
+            <form method="POST" :action="releaseTag?.deposit?.release_all_url" class="bc-modal-foot">
                 @csrf
                 @method('PATCH')
                 <button type="button" @click="releaseTag = null" class="bc-btn bc-btn-ghost">Close</button>
                 <button type="submit" class="bc-btn bc-btn-primary">
                     <span data-lucide="package-check" class="h-4 w-4"></span>
-                    Release bag
+                    <span x-text="ticketActiveCount > 1 ? `Claim all ${ticketActiveCount} cubicles` : 'Claim bag'"></span>
                 </button>
             </form>
-            <form method="POST" :action="releaseTag?.deposit?.void_url" class="border-t border-border px-5 py-3 text-center dark:border-gray-800">
+            <form x-show="currentTicket ? currentTicket.can_void : true" method="POST" :action="releaseTag?.deposit?.void_url" class="border-t border-border px-5 py-3 text-center dark:border-gray-800">
                 @csrf
                 @method('PATCH')
                 <button
                     type="submit"
-                    x-on:click.prevent="Swal.fire({ title: 'Void this deposit?', text: 'Only for a mistake (wrong tag or size). The sale is cancelled and the tag becomes free.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', confirmButtonText: 'Void deposit' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
+                    x-on:click.prevent="Swal.fire({ title: 'Void this ticket?', text: 'Only for a mistake. The whole sale is cancelled and every cubicle of this tag becomes free.', icon: 'warning', showCancelButton: true, confirmButtonColor: '#dc2626', confirmButtonText: 'Void ticket' }).then((r) => { if (r.isConfirmed) $el.closest('form').submit(); })"
                     class="text-xs font-medium text-red-600 hover:underline"
-                >Entered by mistake? Void this deposit</button>
+                >Entered by mistake? Void this ticket</button>
             </form>
         </div>
     </div>
@@ -594,8 +668,8 @@
                 </div>
                 <div class="bc-modal-body space-y-5">
                     <div>
-                        <label class="text-sm font-semibold" for="bc-tag-count">Number of claim tags</label>
-                        <p class="text-xs bc-muted">Match your printed tag cards: tags are numbered 01 to N.</p>
+                        <label class="text-sm font-semibold" for="bc-tag-count">Number of cubicles (claim tags)</label>
+                        <p class="text-xs bc-muted">One tag card per cubicle, numbered 01 to N.</p>
                         <div class="mt-2 flex items-center gap-2">
                             <button type="button" class="bc-chip" @click="settingsCount = Math.max(0, (settingsCount || 0) - 1)" aria-label="One less tag">−</button>
                             <input id="bc-tag-count" type="number" name="baggage_tag_count" x-model.number="settingsCount" min="0" max="{{ \App\Support\BaggageCounter::MAX_TAGS }}" class="bc-input bc-tnum text-center" style="width:6rem;" required>
@@ -603,7 +677,7 @@
                         </div>
                         @error('baggage_tag_count')<p class="mt-2 text-xs text-red-600">{{ $message }}</p>@enderror
                         <p x-show="settingsCount < tagCount && usedAbove(settingsCount) > 0" class="mt-2 rounded-lg px-3 py-2 text-xs bc-tone-stored" style="background:var(--bc-soft);color:var(--bc);">
-                            <span x-text="usedAbove(settingsCount)"></span> stored bag(s) are on tags above #<span x-text="String(settingsCount).padStart(2, '0')"></span>. They stay on the board until released.
+                            <span x-text="usedAbove(settingsCount)"></span> stored bag(s) are in cubicles above #<span x-text="String(settingsCount).padStart(2, '0')"></span>. They stay on the board until released.
                         </p>
                     </div>
 
@@ -642,25 +716,29 @@ function baggageCounter(config) {
     return {
         tags: config.tags || [],
         rates: config.rates || [],
+        tickets: config.tickets || {},
+        heldClaimTags: (config.heldClaimTags || []).map(Number),
         tagCount: config.tagCount || 0,
         now: Date.now(),
         filter: 'all',
         findValue: '',
-        depositTag: null,
+        depositOpen: false,
         releaseTag: null,
         settingsOpen: Boolean(config.settingsOpen),
         settingsCount: config.tagCount || 0,
         setupCount: 6,
-        size: '',
+        rows: [],
+        rowSeq: 0,
+        customerName: '',
+        customerPhone: '',
+        notes: '',
         paymentType: 'cash',
         submitting: false,
         init() {
             setInterval(() => { this.now = Date.now(); }, 1000);
-            if (config.reopenTag) {
-                const tag = this.tags.find(t => Number(t.number) === Number(config.reopenTag) && !t.deposit);
-                if (tag) this.openDeposit(tag);
-            }
-            this.$watch('depositTag', () => this.refreshIcons());
+            if (config.old) this.reopenDeposit(config.old);
+            this.$watch('depositOpen', () => this.refreshIcons());
+            this.$watch('rows', () => this.refreshIcons());
             this.$watch('releaseTag', () => this.refreshIcons());
             this.$watch('filter', () => this.refreshIcons());
             this.$watch('settingsOpen', () => this.refreshIcons());
@@ -677,6 +755,7 @@ function baggageCounter(config) {
         get freeTags() { return this.tags.filter(t => !t.deposit); },
         get freeCount() { return this.freeTags.length; },
         get usedCount() { return this.tags.filter(t => t.deposit).length; },
+        get customerCount() { return new Set(this.tags.filter(t => t.deposit).map(t => t.deposit.ticket_code || t.number)).size; },
         get overdueTags() { return this.tags.filter(t => t.deposit && this.isOverdue(t.deposit)); },
         get overdueCount() { return this.overdueTags.length; },
         get visibleTags() {
@@ -685,7 +764,6 @@ function baggageCounter(config) {
             if (this.filter === 'overdue') return this.overdueTags;
             return this.tags;
         },
-        get selectedRate() { return this.rates.find(r => r.size === this.size); },
         get nextDue() {
             const upcoming = this.tags
                 .filter(t => t.deposit && !this.isOverdue(t.deposit))
@@ -695,42 +773,145 @@ function baggageCounter(config) {
         get clock() {
             return new Date(this.now).toLocaleString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' });
         },
-        statusOf(tag) {
-            if (!tag.deposit) return 'Free';
-            return this.isOverdue(tag.deposit) ? 'Overdue' : 'Stored';
+
+        // ----- Store baggage -----
+        // Claim tag = the first cubicle whose tag card is not still out with another customer (same rule as the server).
+        get claimNumber() {
+            const row = this.rows.find(r => !this.isHeldTag(r.number));
+            return row ? row.number : null;
+        },
+        get claimLabel() { return this.claimNumber ? this.pad(this.claimNumber) : ''; },
+        get depositTotal() { return this.rows.reduce((sum, r) => sum + (Number(r.amount) || 0), 0); },
+        get canSubmit() {
+            return !this.submitting
+                && this.customerName.trim() !== ''
+                && this.rows.length > 0
+                && Boolean(this.claimNumber)
+                && this.rows.every(r => r.size && r.amount !== '' && r.amount !== null && Number(r.amount) >= 0);
+        },
+        newRow(number, size = null, amount = null) {
+            const rate = size ? this.rates.find(r => r.size === size) : (this.rates.length === 1 ? this.rates[0] : null);
+            return {
+                key: ++this.rowSeq,
+                number: Number(number),
+                size: rate ? rate.size : '',
+                amount: amount !== null && amount !== undefined && amount !== '' ? amount : (rate ? rate.price : ''),
+            };
+        },
+        rowRate(row) { return this.rates.find(r => r.size === row.size); },
+        pickSize(row, rate) {
+            row.size = rate.size;
+            row.amount = rate.price;
+        },
+        isHeldTag(number) { return this.heldClaimTags.includes(Number(number)); },
+        cubicleOptions(row) {
+            const used = this.rows.filter(r => r !== row).map(r => r.number);
+            return this.freeTags.filter(t => !used.includes(Number(t.number)));
+        },
+        nextFreeNumber() {
+            const used = this.rows.map(r => r.number);
+            const tag = this.freeTags.find(t => !used.includes(Number(t.number)));
+            return tag ? Number(tag.number) : null;
+        },
+        addRow() {
+            const number = this.nextFreeNumber();
+            if (number) this.rows.push(this.newRow(number));
+        },
+        removeRow(index) {
+            if (this.rows.length > 1) this.rows.splice(index, 1);
         },
         storeNext() {
-            const tag = this.freeTags[0];
+            const tag = this.freeTags.find(t => !this.isHeldTag(t.number)) || this.freeTags[0];
             if (tag) this.openDeposit(tag);
         },
         openDeposit(tag) {
             this.releaseTag = null;
             this.settingsOpen = false;
-            this.depositTag = tag;
-            this.size = this.rates.length === 1 ? this.rates[0].size : '';
+            this.rows = [this.newRow(tag.number)];
+            this.customerName = '';
+            this.customerPhone = '';
+            this.notes = '';
             this.paymentType = 'cash';
             this.submitting = false;
+            this.depositOpen = true;
+            this.$nextTick(() => this.$refs.customerName?.focus());
         },
-        switchTag(number) {
-            const tag = this.tags.find(t => Number(t.number) === Number(number) && !t.deposit);
-            if (tag) this.depositTag = tag;
+        reopenDeposit(old) {
+            const rows = (old.cubicles || [])
+                .filter(c => this.freeTags.some(t => Number(t.number) === Number(c.number)))
+                .map(c => this.newRow(c.number, c.size, c.amount));
+            if (!rows.length) {
+                const tag = this.freeTags[0];
+                if (!tag) return;
+                rows.push(this.newRow(tag.number));
+            }
+            this.releaseTag = null;
+            this.rows = rows;
+            this.customerName = old.customer_name || '';
+            this.customerPhone = old.customer_phone || '';
+            this.notes = old.notes || '';
+            this.paymentType = old.payment_type || 'cash';
+            this.submitting = false;
+            this.depositOpen = true;
         },
+
+        // ----- Claim baggage -----
+        ticketOf(tag) {
+            const code = tag?.deposit?.ticket_code;
+            return code ? this.tickets[code] || null : null;
+        },
+        ticketCount(tag) {
+            const ticket = this.ticketOf(tag);
+            return ticket ? ticket.cubicles.filter(c => c.active).length : 1;
+        },
+        get currentTicket() { return this.ticketOf(this.releaseTag); },
+        // The ticket's cubicles; active ones carry the live deposit (countdown + claim URL).
+        get ticketRows() {
+            const tag = this.releaseTag;
+            if (!tag?.deposit) return [];
+            const ticket = this.currentTicket;
+            if (!ticket) {
+                return [{ number: tag.number, label: tag.label, size_label: tag.deposit.size_label, amount: tag.deposit.amount, deposit: tag.deposit }];
+            }
+            return ticket.cubicles.map(c => {
+                const live = c.active ? this.tags.find(t => Number(t.number) === Number(c.number) && t.deposit?.ticket_code === ticket.code) : null;
+                return { ...c, deposit: live ? live.deposit : null };
+            });
+        },
+        get ticketActiveCount() { return this.ticketRows.filter(r => r.deposit).length; },
         openRelease(tag) {
-            this.depositTag = null;
+            this.depositOpen = false;
             this.settingsOpen = false;
             this.releaseTag = tag;
         },
         openSettings() {
-            this.depositTag = null;
+            this.depositOpen = false;
             this.releaseTag = null;
             this.settingsCount = this.tagCount;
             this.settingsOpen = true;
         },
+        statusOf(tag) {
+            if (!tag.deposit) return 'Free';
+            return this.isOverdue(tag.deposit) ? 'Overdue' : 'Stored';
+        },
+        // A number opens that claim tag's ticket (or that cubicle); text searches customer name / mobile.
         findTag() {
-            const number = parseInt(this.findValue, 10);
-            const tag = this.tags.find(t => Number(t.number) === number);
+            const value = String(this.findValue).trim();
+            if (!value) return;
+            const stored = this.tags.filter(t => t.deposit);
+            let tag = null;
+            if (/^\d+$/.test(value)) {
+                const number = parseInt(value, 10);
+                tag = stored.find(t => Number(t.deposit.claim_tag) === number)
+                    || this.tags.find(t => Number(t.number) === number);
+            } else {
+                const needle = value.toLowerCase();
+                const digits = value.replace(/\D/g, '');
+                tag = stored.find(t => (t.deposit.customer_name || '').toLowerCase().includes(needle)
+                    || (digits.length >= 3 && (t.deposit.customer_phone || '').replace(/\D/g, '').includes(digits)));
+            }
             if (!tag) {
-                window.Swal?.fire({ toast: true, position: 'top-end', timer: 2200, showConfirmButton: false, icon: 'info', title: `Tag #${String(this.findValue).padStart(2, '0')} does not exist` });
+                window.Swal?.fire({ toast: true, position: 'top-end', timer: 2200, showConfirmButton: false, icon: 'info', title: `No tag or customer matches "${value}"` });
                 return;
             }
             this.findValue = '';
@@ -739,13 +920,15 @@ function baggageCounter(config) {
         usedAbove(count) {
             return this.tags.filter(t => t.deposit && Number(t.number) > Number(count || 0)).length;
         },
-        modalOpen() { return Boolean(this.depositTag || this.releaseTag || this.settingsOpen); },
+        modalOpen() { return Boolean(this.depositOpen || this.releaseTag || this.settingsOpen); },
         hotkey(event) {
             const typing = ['INPUT', 'SELECT', 'TEXTAREA'].includes(event.target.tagName);
             if (event.ctrlKey || event.metaKey || event.altKey) return;
-            if (this.depositTag && !typing && /^[1-9]$/.test(event.key)) {
+            // 1-9 picks the size of the last cubicle row.
+            if (this.depositOpen && !typing && /^[1-9]$/.test(event.key)) {
                 const rate = this.rates[Number(event.key) - 1];
-                if (rate) { this.size = rate.size; event.preventDefault(); }
+                const row = this.rows[this.rows.length - 1];
+                if (rate && row) { this.pickSize(row, rate); event.preventDefault(); }
                 return;
             }
             if (typing || this.modalOpen() || !this.tags.length) return;
@@ -788,6 +971,7 @@ function baggageCounter(config) {
             const sameDay = due.toDateString() === new Date(this.now).toDateString();
             return sameDay ? this.time(due) : due.toLocaleString('en-PH', { weekday: 'short', hour: 'numeric', minute: '2-digit' });
         },
+        pad(number) { return String(number ?? '').padStart(2, '0'); },
         money(value) {
             return Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         },

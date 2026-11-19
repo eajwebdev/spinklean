@@ -71,8 +71,8 @@ class JobOrderBranchFilterTest extends TestCase
         $cashier = User::factory()->create(['role' => 'cashier', 'branch_id' => $branch->id, 'access' => ['job_orders']]);
 
         $this->actingAs($cashier)->post(route('admin.baggage.store'), [
-            'tag_number' => 1,
-            'size' => 'small',
+            'customer_name' => 'Juan Dela Cruz',
+            'cubicles' => [['number' => 1, 'size' => 'small', 'amount' => 20]],
             'payment_type' => 'cash',
         ])->assertSessionHasNoErrors();
 

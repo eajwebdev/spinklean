@@ -1128,7 +1128,11 @@
                     <tbody class="divide-y divide-border dark:divide-gray-800">
                         <template x-for="row in data.analytics.baggage.at_counter" :key="'counter-' + row.id">
                             <tr>
-                                <td class="px-4 py-3 font-semibold" x-text="'#' + row.tag"></td>
+                                <td class="px-4 py-3">
+                                    <span class="font-semibold" x-text="'Tag #' + row.claim_tag"></span>
+                                    <span class="text-xs text-muted" x-text="'· cubicle #' + row.tag"></span>
+                                    <span x-show="row.customer" class="block text-xs text-muted" x-text="row.customer + (row.customer_phone ? ' · ' + row.customer_phone : '')"></span>
+                                </td>
                                 <td class="px-4 py-3" x-text="row.branch"></td>
                                 <td class="px-4 py-3" x-text="row.size"></td>
                                 <td class="px-4 py-3 whitespace-nowrap" x-text="row.deposited_at"></td>
@@ -1168,7 +1172,11 @@
                     <tbody class="divide-y divide-border dark:divide-gray-800">
                         <template x-for="row in data.analytics.baggage.list" :key="'bag-' + row.id">
                             <tr>
-                                <td class="px-4 py-3 font-semibold" x-text="'#' + row.tag"></td>
+                                <td class="px-4 py-3">
+                                    <span class="font-semibold" x-text="'Tag #' + row.claim_tag"></span>
+                                    <span class="text-xs text-muted" x-text="'· cubicle #' + row.tag"></span>
+                                    <span x-show="row.customer" class="block text-xs text-muted" x-text="row.customer + (row.customer_phone ? ' · ' + row.customer_phone : '')"></span>
+                                </td>
                                 <td class="px-4 py-3" x-text="row.branch"></td>
                                 <td class="px-4 py-3">
                                     <span x-text="row.size"></span>

@@ -257,7 +257,8 @@ class DashboardAnalytics
 
         // A sale counts unless it was voided / its Job Order cancelled or deleted.
         $isSold = fn (BaggageDeposit $d) => ! $d->voided_at && $d->jobOrder && $d->jobOrder->status !== 'cancelled';
-        $amountOf = fn (BaggageDeposit $d) => (float) ($d->jobOrder?->total ?? $d->amount);
+        // Per cubicle: the cubicles of one ticket share a Job Order, so its total would count twice.
+        $amountOf = fn (BaggageDeposit $d) => (float) $d->amount;
         $sold = $deposits->filter($isSold)->values();
         $total = (float) $sold->sum($amountOf);
 
@@ -347,9 +348,12 @@ class DashboardAnalytics
         return [
             'id' => $d->id,
             'tag' => $d->tagLabel(),
+            'claim_tag' => $d->claimLabel(),
+            'customer' => $d->customer_name,
+            'customer_phone' => $d->customer_phone,
             'branch' => $d->branch?->name,
             'size' => BaggageCounter::label($d->size),
-            'amount' => $this->money((float) ($d->jobOrder?->total ?? $d->amount)),
+            'amount' => $this->money((float) $d->amount),
             'payment_type' => strtoupper((string) $d->payment_type),
             'deposited_at' => $d->deposited_at?->format('M d, h:i A'),
             'due_at' => $d->due_at?->format('M d, h:i A'),

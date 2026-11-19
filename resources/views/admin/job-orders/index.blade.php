@@ -149,7 +149,7 @@
                                 <span class="mt-1 inline-flex rounded-md border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800 dark:border-amber-900/60 dark:bg-amber-500/10 dark:text-amber-300">Rush</span>
                             @endif
                             @if($order->baggageDeposit)
-                                <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Baggage Tag #{{ $order->baggageDeposit->tagLabel() }}</span>
+                                <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Baggage Tag #{{ $order->baggageDeposit->claimLabel() }}</span>
                             @elseif($order->is_product_sale)
                                 <span class="mt-1 inline-flex rounded-md bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">Product Sale</span>
                             @endif

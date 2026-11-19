@@ -46,11 +46,16 @@
             @endif
             @if($order->baggageDeposit)
                 @php($bag = $order->baggageDeposit)
-                <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Baggage Tag #{{ $bag->tagLabel() }}</span>
-                <p class="text-sm text-muted">
-                    {{ \App\Support\BaggageCounter::label($bag->size) }} · stored {{ $bag->deposited_at?->format('M d, h:i A') }}
-                    · {{ $bag->voided_at ? 'voided' : ($bag->released_at ? 'released '.$bag->released_at->format('M d, h:i A') : 'still at the counter') }}
-                </p>
+                <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Baggage Tag #{{ $bag->claimLabel() }}</span>
+                @if($bag->customer_name)
+                    <p class="text-sm font-medium">{{ $bag->customer_name }}@if($bag->customer_phone) · {{ $bag->customer_phone }}@endif</p>
+                @endif
+                @foreach($order->baggageDeposits->sortBy('tag_number') as $cubicle)
+                    <p class="text-sm text-muted">
+                        Cubicle #{{ $cubicle->tagLabel() }} · {{ \App\Support\BaggageCounter::label($cubicle->size) }} · stored {{ $cubicle->deposited_at?->format('M d, h:i A') }}
+                        · {{ $cubicle->voided_at ? 'voided' : ($cubicle->released_at ? 'claimed '.$cubicle->released_at->format('M d, h:i A') : 'still at the counter') }}
+                    </p>
+                @endforeach
             @elseif($order->is_product_sale)
                 <span class="inline-flex rounded-md bg-primary/10 px-2 py-1 text-xs font-semibold uppercase text-primary">Product Sale</span>
                 <p class="text-sm text-muted">Products sold from {{ $order->branch?->name }} stock. No laundry processing or transfer.</p>
